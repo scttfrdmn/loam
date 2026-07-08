@@ -378,3 +378,59 @@ def test_status_from_store(tmp_path):
     assert st["shards_done"] == 1
     assert st["shards_remaining"] == 2
     assert st["complete"] is False
+    # default status has no ledger
+    assert "ledger" not in st
+
+
+def test_status_detail_ledger(tmp_path):
+    import json
+
+    from loam import state, plan
+
+    out = str(tmp_path / "out")
+    scenes = [Scene(id=f"s{i}", datetime="2023-01-01", assets={}) for i in range(3)]
+    m = Manifest(
+        version=MANIFEST_VERSION, op="band-math", params={"indices": ["NDVI"]},
+        collection="sentinel-2-l2a", aoi=[0, 0, 1, 1], output_uri=out, scenes=scenes,
+    )
+    m.shards = shard_scenes(scenes, 1)  # 3 shards
+    manifest_uri = str(tmp_path / "m.json")
+    state.put_text(manifest_uri, m.to_json())
+
+    # two shards done, with realistic run_shard summaries; one has a failed scene
+    state.put_text(state.checkpoint_uri(out, 0), json.dumps(
+        {"shard": 0, "status": "done", "outputs": 2, "bytes_written": 1000, "seconds": 1.5,
+         "failed": []}))
+    state.put_text(state.checkpoint_uri(out, 1), json.dumps(
+        {"shard": 1, "status": "done", "outputs": 1, "bytes_written": 500, "seconds": 2.0,
+         "failed": [{"scene": "s1", "error": "boom"}]}))
+
+    st = plan.status(manifest_uri, detail=True)
+    assert st["shards_done"] == 2
+    led = st["ledger"]
+    assert led["outputs"] == 3
+    assert led["bytes_written"] == 1500
+    assert led["seconds"] == 3.5
+    assert led["failed_scenes"] == 1
+    # per-shard rows present and sorted; shard 2 (no checkpoint) absent
+    assert [r["shard"] for r in led["shards"]] == [0, 1]
+
+
+def test_status_detail_survives_malformed_checkpoint(tmp_path):
+    # A partial/garbage checkpoint must not sink the whole ledger view.
+    from loam import state, plan
+
+    out = str(tmp_path / "out")
+    scenes = [Scene(id="s0", datetime="2023-01-01", assets={})]
+    m = Manifest(
+        version=MANIFEST_VERSION, op="cloud-mask", params={}, collection="sentinel-2-l2a",
+        aoi=[0, 0, 1, 1], output_uri=out, scenes=scenes,
+    )
+    m.shards = shard_scenes(scenes, 1)
+    manifest_uri = str(tmp_path / "m.json")
+    state.put_text(manifest_uri, m.to_json())
+    state.put_text(state.checkpoint_uri(out, 0), "{not valid json")
+
+    st = plan.status(manifest_uri, detail=True)
+    assert st["shards_done"] == 1          # checkpoint exists → counts as done
+    assert st["ledger"]["shards"] == []    # but contributes no ledger row

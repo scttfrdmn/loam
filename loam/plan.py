@@ -93,8 +93,16 @@ def write_manifest(manifest: Manifest, manifest_uri: str, *, region: str | None 
     state.put_text(manifest_uri, manifest.to_json(), region=region)
 
 
-def status(manifest_uri: str, *, region: str | None = None) -> dict:
-    """Return progress derived entirely from S3 (done = checkpoint object present)."""
+def status(manifest_uri: str, *, region: str | None = None, detail: bool = False) -> dict:
+    """Return progress derived entirely from S3 (done = checkpoint object present).
+
+    With ``detail=True``, also aggregate a **job ledger** from the per-shard summaries that
+    ``run_shard`` wrote into each checkpoint — total outputs/bytes/seconds and a failed-scene
+    rollup, plus per-shard rows. This is read-only (no writes at status time); a shard whose
+    checkpoint is absent or unreadable simply doesn't contribute a row.
+    """
+    import json
+
     manifest = Manifest.from_json(state.get_text(manifest_uri, region=region))
     total = len(manifest.shards)
     done = sum(
@@ -102,7 +110,7 @@ def status(manifest_uri: str, *, region: str | None = None) -> dict:
         for sh in manifest.shards
         if state.shard_done(manifest.output_uri, sh.index, region=region)
     )
-    return {
+    out = {
         "op": manifest.op,
         "scenes": len(manifest.scenes),
         "shards_total": total,
@@ -110,3 +118,23 @@ def status(manifest_uri: str, *, region: str | None = None) -> dict:
         "shards_remaining": total - done,
         "complete": done == total and total > 0,
     }
+    if not detail:
+        return out
+
+    rows: list[dict] = []
+    for sh in manifest.shards:
+        cp = state.checkpoint_uri(manifest.output_uri, sh.index)
+        if not state.exists(cp, region=region):
+            continue
+        try:
+            rows.append(json.loads(state.get_text(cp, region=region)))
+        except (ValueError, OSError):
+            continue  # a malformed/partial checkpoint must not sink the whole status view
+    out["ledger"] = {
+        "outputs": sum(r.get("outputs", 0) for r in rows),
+        "bytes_written": sum(r.get("bytes_written", 0) for r in rows),
+        "seconds": round(sum(r.get("seconds", 0.0) for r in rows), 3),
+        "failed_scenes": sum(len(r.get("failed", [])) for r in rows),
+        "shards": sorted(rows, key=lambda r: r.get("shard", 0)),
+    }
+    return out

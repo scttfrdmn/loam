@@ -6,6 +6,11 @@ versions follow semver.
 ## [Unreleased]
 
 ### Added
+- **S3 job ledger** (closes #24): `loam status --detail` aggregates a job ledger — total
+  outputs/bytes/seconds and a failed-scene rollup, plus per-shard rows — from the summaries
+  `run_shard` now writes into each checkpoint (enriched with `bytes_written` + `seconds`). Purely
+  read-derived from S3 (no writes at status time, no control plane); a malformed checkpoint is
+  skipped rather than sinking the view. Plain `loam status` output is unchanged.
 - **Resample / reproject op** (closes #22): `loam plan --op resample --bands red,nir
   --dst-crs EPSG:4326 [--dst-res R] [--resampling bilinear|nearest|…]` reprojects each requested
   band to a target CRS/resolution and writes georeferenced COGs — one per band. Warp detail lives
