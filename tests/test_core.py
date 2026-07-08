@@ -18,7 +18,23 @@ def test_index_catalog_ported():
     ndvi = indices.resolve("ndvi")
     assert ndvi.equation == "(nir - red) / (nir + red)"
     assert indices.resolve("BSI").equation == "(swir16 - nir) / (swir16 + nir)"
-    assert len(indices.INDICES) == 7
+    # 7 original + 6 curated (NDWI, SAVI, GNDVI, NDMI, NDRE, ARVI)
+    assert len(indices.INDICES) == 13
+    assert indices.resolve("ndwi").equation == "(green - nir) / (green + nir)"
+    assert indices.resolve("NDRE").equation == "(nir - rededge1) / (nir + rededge1)"
+
+
+def test_every_catalog_equation_validates_and_computes():
+    # Every built-in index must pass the safe-eval allowlist and evaluate over its bands.
+    # Feed a distinct positive scalar per band so denominators can't be zero.
+    env = {b: float(i + 2) for i, b in enumerate(sorted(indices._BAND_TOKENS))}
+    for name, d in indices.INDICES.items():
+        indices.validate_equation(d.equation)  # never raises for a catalog entry
+        needed = indices.bands_in(d.equation)
+        result = indices.safe_eval(d.equation, {b: env[b] for b in needed})
+        assert isinstance(result, float), name
+        # every band the equation references must be a known token (so ops can fetch it)
+        assert needed <= indices._BAND_TOKENS, name
 
 
 def test_custom_index_spec():
@@ -127,8 +143,10 @@ def test_safe_eval_all_catalog_equations():
         "NBR": (nir - swir22) / (nir + swir22),
         "NDSI": (green - swir16) / (green + swir16),
     }
-    for name, d in indices.INDICES.items():
-        assert indices.safe_eval(d.equation, env) == pytest.approx(expected[name]), name
+    # Byte-identical to plain Python for these representative equations. (Full-catalog coverage —
+    # every index validates + computes — is test_every_catalog_equation_validates_and_computes.)
+    for name, want in expected.items():
+        assert indices.safe_eval(indices.INDICES[name].equation, env) == pytest.approx(want), name
 
 
 def test_safe_eval_power_and_unary():

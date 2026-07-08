@@ -6,6 +6,10 @@ versions follow semver.
 ## [Unreleased]
 
 ### Added
+- **More built-in indices** (closes #23): the band-math catalog gains NDWI (McFeeters), SAVI,
+  GNDVI, NDMI, NDRE, and ARVI (7 → 13), each with a cited equation, so users get them by name
+  without a `NAME=equation` custom spec. A test asserts every catalog equation validates under the
+  safe evaluator and references only known bands.
 - **Contributor docs + contract guard** (closes #14): `docs/DESIGN.md` (in-repo design of record —
   the two-halves split, the three execution-agnostic properties, the "executor was the liability"
   framing, scope tiers) and `CONTRIBUTING.md` (uv dev setup, offline vs `LOAM_LIVE_TESTS=1`,
