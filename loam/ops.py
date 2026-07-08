@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .indices import IndexDef, bands_in
+from .indices import IndexDef, bands_in, safe_eval
 from .raster import Raster, read_band as _read_band_raster
 
 # Sentinel-2 L2A Scene Classification (SCL) values that are cloud / cloud-shadow / cirrus.
@@ -84,11 +84,12 @@ def band_math(
         scl = _resample_to(scl, ref_shape)
         cloud = np.isin(np.rint(scl).astype(int), list(_SCL_CLOUD))
 
-    # Evaluate the equation in a numpy namespace. Equations are our own catalog constants or a
-    # user-supplied NAME=equation; the empty __builtins__ blocks the obvious attacks (a fuller
-    # allowlist evaluator is tracked in issue #4).
+    # Evaluate the equation over the band arrays via the AST allowlist in indices.safe_eval (no
+    # Python eval — a user-supplied or manifest-sourced equation can't reach the interpreter).
+    # safe_eval does no arithmetic itself; each numpy op runs under this errstate context, so
+    # NaN/inf/divide-by-zero handling is identical to the prior eval path. Keep it inside the with.
     with np.errstate(invalid="ignore", divide="ignore"):
-        result = eval(index.equation, {"__builtins__": {}}, env)  # noqa: S307 - constrained namespace
+        result = safe_eval(index.equation, env)
     result = np.asarray(result, dtype=np.float32)
     if cloud is not None:
         result = np.where(cloud, np.nan, result)
