@@ -5,6 +5,18 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Added
+- **Contributor docs + contract guard** (closes #14): `docs/DESIGN.md` (in-repo design of record —
+  the two-halves split, the three execution-agnostic properties, the "executor was the liability"
+  framing, scope tiers) and `CONTRIBUTING.md` (uv dev setup, offline vs `LOAM_LIVE_TESTS=1`,
+  ruff/mypy, and the one rule). `tests/test_contract.py` mechanically fails the build if `loam/`
+  imports the substrate (spawn/lagotto/…) or contains EC2 launch/terminate calls — via a static
+  AST scan, so lazy imports are caught too.
+
+### Changed
+- Bumped pinned GitHub Actions off deprecated Node 20 runtimes: `astral-sh/setup-uv` v6 → v8.3.1,
+  `softprops/action-gh-release` v2 → v3.0.1.
+
 ## [0.1.0] — 2026-07-07
 
 Initial Tier-1 MVP. An execution-agnostic open replacement for the operations half of Amazon
