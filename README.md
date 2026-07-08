@@ -66,6 +66,13 @@ uv run loam indices              # run the CLI
 `uv.lock` is committed and CI uses `uv sync --locked`; regenerate it with `uv lock` after
 changing dependencies in `pyproject.toml`.
 
+The default suite is hermetic (no network). Opt-in **live** tests exercise the real Earth
+Search STAC API and read Sentinel-2 COGs over `/vsicurl` (no AWS credentials needed):
+
+```bash
+LOAM_LIVE_TESTS=1 uv run pytest -m integration   # hits the network; skipped by default
+```
+
 ## Use
 
 ```bash

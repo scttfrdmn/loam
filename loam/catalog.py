@@ -27,9 +27,14 @@ COLLECTIONS: dict[str, str] = {
     "landsat": "landsat-c2-l2",
 }
 
-# STAC asset key -> our canonical band name, for Sentinel-2 L2A on Earth Search.
-# Earth Search exposes bands as asset keys like "red", "nir", "swir16", "scl" already, but
-# older catalogs use "B04" etc. — normalize both so equations always see canonical names.
+# STAC asset key -> our canonical band name, for Sentinel-2 L2A.
+# Empirically (see tests/test_integration.py), Earth Search v1 ALREADY exposes lowercase
+# canonical keys — "red", "nir", "swir16", "scl", etc. — never "B04", so this map is a no-op on
+# Earth Search. It is kept deliberately for OTHER STAC catalogs reachable via the overridable
+# --stac-url: Microsoft Planetary Computer's sentinel-2-l2a uses "B04"/"SCL" asset keys, and
+# older/self-hosted catalogs vary. Normalizing here means equations always see canonical names
+# regardless of provider. Earth Search also emits "<band>-jp2" duplicates; those are dropped by
+# the wanted_bands filter in search() (every loam path passes it).
 _S2_ASSET_ALIASES: dict[str, str] = {
     "B01": "coastal", "B02": "blue", "B03": "green", "B04": "red",
     "B05": "rededge1", "B06": "rededge2", "B07": "rededge3",

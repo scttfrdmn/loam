@@ -35,6 +35,14 @@ include = ["loam*"]
 line-length = 100
 target-version = "py310"
 
+[tool.pytest.ini_options]
+# Register the integration marker so `-m integration` is recognized (and `--strict-markers`
+# would not error). Live tests hit the network (Earth Search / public COGs) and are opt-in via
+# LOAM_LIVE_TESTS=1 — they skip themselves otherwise, so plain `pytest` stays fully offline.
+markers = [
+    "integration: exercises the live network path (Earth Search STAC / /vsicurl COG reads)",
+]
+
 [tool.mypy]
 # 3.12 (not the 3.10 support floor): numpy's bundled stubs use the 3.12+ `type`
 # statement, which mypy refuses to parse under an older --python-version target. Our
