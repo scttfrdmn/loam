@@ -5,49 +5,20 @@ versions follow semver.
 
 ## [Unreleased]
 
-### Added
-- **Release automation** (closes #2): `.github/workflows/release.yml` triggers on a `v*` tag —
-  verifies the tag matches `pyproject.toml`'s version, builds sdist+wheel with `uv build`,
-  smoke-tests the wheel in a clean env (`loam --version`), publishes to PyPI via **Trusted
-  Publishing (OIDC, no stored token)**, and cuts a GitHub Release with generated notes. The PyPI
-  distribution name is **`loam-geo`** (the bare `loam` is taken by an unrelated project); the
-  import name stays `loam`. Added release classifiers + project URLs to `pyproject.toml`.
-- **Live STAC integration tests** (closes #3): opt-in `tests/test_integration.py` (marked
-  `integration`, skipped unless `LOAM_LIVE_TESTS=1`) exercises the real network path the offline
-  suite can't — Earth Search search + pagination, asset-key → canonical-band mapping, and a full
-  `run_shard` reading real Sentinel-2 COGs via `/vsicurl` (no AWS creds). Default `pytest` stays
-  hermetic. Resolved the asset-alias question: Earth Search v1 exposes lowercase canonical keys
-  (`red`, `nir`, `scl`, …), so `_S2_ASSET_ALIASES` is a no-op there and is retained only for
-  other catalogs (e.g. Planetary Computer's `B04`); comment updated in `catalog.py`.
+## [0.1.0] — 2026-07-07
+
+Initial Tier-1 MVP. An execution-agnostic open replacement for the operations half of Amazon
+SageMaker Geospatial's Earth Observation Jobs, born from the fieldwork/BuckAI engagement after
+SageMaker Geospatial closed to new customers (2026-07-30).
 
 ### Security
-- **Safe band-math evaluation** (closes #4): `band_math` no longer uses Python `eval`. A custom
-  `NAME=equation` index spec — or an equation string in a manifest of unknown origin — is now
+- **Safe band-math evaluation** (closes #4): `band_math` does not use Python `eval`. A custom
+  `NAME=equation` index spec — or an equation string in a manifest of unknown origin — is
   evaluated by a zero-dependency AST allowlist (`indices.safe_eval`) that permits only numeric
   literals, band names, and `+ - * / **` / unary ±. Anything else (calls, attribute/dunder
   access, subscripts, comparisons, non-numeric constants, …) raises `ValueError` and never
   executes. `parse_spec` validates at `loam plan` time so a bad spec fails early. All 7 catalog
   equations compute byte-identically.
-
-### Added
-- **CI + uv toolchain** (closes #1): GitHub Actions runs ruff + mypy + pytest on push/PR across
-  Python 3.10/3.11/3.12. loam standardizes on [uv](https://docs.astral.sh/uv/) — a committed
-  `uv.lock` pins the dependency set CI installs (`uv sync --locked`); README documents the
-  `uv sync --extra dev` / `uv run` dev loop. mypy target set to 3.12 so numpy 2.5's 3.12+ stub
-  grammar parses.
-- **Georeferenced output** (closes #5): ops now return a `Raster` (array + affine transform +
-  CRS + nodata), and `run-shard` writes **Cloud-Optimized GeoTIFF** by default (`--format`
-  `cog`|`gtiff`|`npy`). Downsampled reads scale the transform to the returned grid, so outputs
-  are georeferenced at the correct resolution. New `loam/raster.py` owns all rasterio write
-  detail (read → compute → write GeoTIFF via an in-memory dataset, no filesystem touch).
-  Required for GDAL/QGIS use and for the fieldwork SAM step (Tutorial 01), which georeferences
-  detections from the output transform.
-
-## [0.1.0] — unreleased
-
-Initial Tier-1 MVP. An execution-agnostic open replacement for the operations half of Amazon
-SageMaker Geospatial's Earth Observation Jobs, born from the fieldwork/BuckAI engagement after
-SageMaker Geospatial closed to new customers (2026-07-30).
 
 ### Added
 - **Band-math catalog** (`loam.indices`): NDVI, BSI, EVI, MNDWI, NDBI, NBR, NDSI — ported
@@ -66,4 +37,25 @@ SageMaker Geospatial closed to new customers (2026-07-30).
 - **plan / status** (`loam.plan`): build+write a manifest; report progress from S3.
 - **CLI** (`loam.cli`): `indices`, `collections`, `plan`, `run-shard`, `status`, `dispatch`.
   `dispatch` prints spawn / local runner commands but never executes them (agnostic seam).
+- **Georeferenced output** (closes #5): ops return a `Raster` (array + affine transform + CRS +
+  nodata), and `run-shard` writes **Cloud-Optimized GeoTIFF** by default (`--format`
+  `cog`|`gtiff`|`npy`). Downsampled reads scale the transform to the returned grid, so outputs
+  are georeferenced at the correct resolution. New `loam/raster.py` owns all rasterio write
+  detail (read → compute → write GeoTIFF via an in-memory dataset, no filesystem touch).
+
+### Infrastructure & tests
+- **CI + uv toolchain** (closes #1): GitHub Actions runs ruff + mypy + pytest on push/PR across
+  Python 3.10/3.11/3.12. loam standardizes on [uv](https://docs.astral.sh/uv/) — a committed
+  `uv.lock` pins the dependency set CI installs (`uv sync --locked`). mypy target set to 3.12 so
+  numpy 2.5's 3.12+ stub grammar parses.
+- **Release automation** (closes #2): `.github/workflows/release.yml` triggers on a `v*` tag —
+  verifies the tag matches `pyproject.toml`'s version, builds sdist+wheel with `uv build`,
+  smoke-tests the wheel in a clean env, publishes to PyPI via **Trusted Publishing (OIDC, no
+  stored token)**, and cuts a GitHub Release. The PyPI distribution is **`loam-geo`** (the bare
+  `loam` name was taken); the import name stays `loam`.
+- **Live STAC integration tests** (closes #3): opt-in `tests/test_integration.py` (skipped
+  unless `LOAM_LIVE_TESTS=1`) exercises the real Earth Search path + a full `run_shard` over real
+  Sentinel-2 COGs; default `pytest` stays hermetic. Confirmed Earth Search v1 exposes lowercase
+  canonical asset keys (`red`, `nir`, `scl`, …), so `_S2_ASSET_ALIASES` is retained only for
+  other catalogs (e.g. Planetary Computer's `B04`).
 - Core test suite that runs without network or AWS.
