@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import io
 import json
+import time
 
 import numpy as np
 
@@ -31,25 +32,27 @@ from .manifest import Manifest, Scene
 from .raster import Raster, write_geotiff
 
 
-def _save_npy(uri: str, arr: np.ndarray, *, region: str | None) -> None:
+def _save_npy(uri: str, arr: np.ndarray, *, region: str | None) -> int:
     buf = io.BytesIO()
     np.save(buf, arr)
-    state.put_bytes(uri, buf.getvalue(), region=region)
+    data = buf.getvalue()
+    state.put_bytes(uri, data, region=region)
+    return len(data)
 
 
 def _save_raster(output_uri: str, index: int, scene_id: str, name: str,
-                 raster: Raster, fmt: str, *, region: str | None) -> str:
-    """Write one output raster in the requested format; return the URI written."""
+                 raster: Raster, fmt: str, *, region: str | None) -> tuple[str, int]:
+    """Write one output raster in the requested format; return (uri, bytes_written)."""
     if fmt == "npy":
         uri = state.output_uri_for(output_uri, index, f"{scene_id}__{name}.npy")
-        _save_npy(uri, raster.data, region=region)
-        return uri
+        nbytes = _save_npy(uri, raster.data, region=region)
+        return uri, nbytes
     # gtiff / cog
     ext = "tif"
     uri = state.output_uri_for(output_uri, index, f"{scene_id}__{name}.{ext}")
     data = write_geotiff(uri, raster, cog=(fmt != "gtiff-plain"))
     state.put_bytes(uri, data, region=region)
-    return uri
+    return uri, len(data)
 
 
 def _process_scene(op: str, params: dict, scene: Scene) -> dict[str, Raster]:
@@ -92,6 +95,8 @@ def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force
     scenes = manifest.scenes_for(index)
     written: list[str] = []
     failed: list[dict] = []
+    bytes_written = 0
+    started = time.monotonic()
 
     for scene in scenes:
         try:
@@ -100,16 +105,22 @@ def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force
             failed.append({"scene": scene.id, "error": str(e)})
             continue
         for name, raster in results.items():
-            uri = _save_raster(manifest.output_uri, index, scene.id, name, raster, fmt, region=region)
+            uri, nbytes = _save_raster(
+                manifest.output_uri, index, scene.id, name, raster, fmt, region=region
+            )
             written.append(uri)
+            bytes_written += nbytes
 
-    # Checkpoint LAST — only now is the shard's output durable (delete-after-durable).
+    # Checkpoint LAST — only now is the shard's output durable (delete-after-durable). The summary
+    # doubles as the job-ledger row `loam status --detail` aggregates (bytes/seconds/failures).
     summary = {
         "shard": index,
         "status": "done",
         "format": fmt,
         "scenes": len(scenes),
         "outputs": len(written),
+        "bytes_written": bytes_written,
+        "seconds": round(time.monotonic() - started, 3),
         "failed": failed,
     }
     state.put_text(

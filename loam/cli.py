@@ -90,7 +90,7 @@ def _cmd_run_shard(args: argparse.Namespace) -> int:
 def _cmd_status(args: argparse.Namespace) -> int:
     from .plan import status
 
-    s = status(args.manifest, region=args.region)
+    s = status(args.manifest, region=args.region, detail=args.detail)
     print(json.dumps(s, indent=2))
     return 0
 
@@ -170,6 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     ps = sub.add_parser("status", help="progress from S3 (no control plane)")
     ps.add_argument("--manifest", required=True)
+    ps.add_argument("--detail", action="store_true",
+                    help="aggregate a job ledger (bytes/seconds/failures + per-shard rows) from S3")
     ps.add_argument("--region", default=None)
     ps.set_defaults(func=_cmd_status)
 
