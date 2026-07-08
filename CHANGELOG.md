@@ -6,6 +6,14 @@ versions follow semver.
 ## [Unreleased]
 
 ### Added
+- **Per-shard compute-shape estimation** (closes #17): `loam plan` now attaches a `shape` block to
+  each shard — bands read, approx decoded bytes read, peak working-set RAM, and an estimated
+  runtime — computed by the new pure `loam/shape.py` from metadata alone, with **zero pixel reads
+  or network I/O** (an import-scan test enforces that). `loam plan` prints an aggregate footer and
+  `loam dispatch` surfaces each shard's estimate as a comment above its runner command — a
+  right-sizing signal for truffle/a cost model. loam *describes* demand; it never provisions.
+  Manifest is **v2**: the optional `shape` field is backward/forward-compatible (old manifests load
+  with `shape=None`; `from_json` now tolerates unknown keys, protecting all future additive fields).
 - **S3 job ledger** (closes #24): `loam status --detail` aggregates a job ledger — total
   outputs/bytes/seconds and a failed-scene rollup, plus per-shard rows — from the summaries
   `run_shard` now writes into each checkpoint (enriched with `bytes_written` + `seconds`). Purely

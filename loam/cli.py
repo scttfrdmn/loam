@@ -74,6 +74,20 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     )
     print(f"manifest: {args.manifest}")
     print(f"outputs:  {args.output}")
+
+    # Compute-shape footer — an estimate of per-shard demand for right-sizing a box (loam
+    # describes; it never provisions). Aggregate from the per-shard shapes the plan attached.
+    from .shape import human_bytes
+
+    shapes = [sh.shape for sh in manifest.shards if sh.shape]
+    if shapes:
+        peak = max(s["peak_rss_bytes"] for s in shapes)
+        max_read = max(s["approx_bytes_read"] for s in shapes)
+        max_secs = max(s["est_seconds"] for s in shapes)
+        print(
+            f"est/shard (max): ~{human_bytes(max_read)} read · ~{human_bytes(peak)} peak RAM · "
+            f"~{max_secs:.0f}s  (order-of-magnitude; feed truffle, not an SLA)"
+        )
     print(f"\nnext: hand shards 0..{len(manifest.shards) - 1} to any runner:")
     print(f"  loam dispatch --manifest {args.manifest}")
     return 0
@@ -111,9 +125,18 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
         print(f"# {n} shards — bare loop (laptop / single box):")
         print(f"for i in $(seq 0 {n - 1}); do loam run-shard --manifest {args.manifest} -i $i; done")
     elif args.runner == "spawn":
+        from .shape import human_bytes
+
         print(f"# {n} shards — one spawn box per shard (fan out; scale-out beats one big box):")
         print("# each is idempotent + spot-safe; --on-complete terminate (spawn#262).")
-        for i in range(n):
+        for sh in manifest.shards:
+            i = sh.index
+            if sh.shape:  # a suggestion for right-sizing — loam describes, truffle decides
+                print(
+                    f"# shard {i:05d}: ~{human_bytes(sh.shape['peak_rss_bytes'])} peak RAM, "
+                    f"~{human_bytes(sh.shape['approx_bytes_read'])} read, "
+                    f"~{sh.shape['est_seconds']:.0f}s (est)"
+                )
             print(
                 f"spawn launch loam-{i:05d} --instance-type {args.instance} --spot "
                 f"--on-complete terminate --iam-policy s3:ReadWrite "

@@ -77,11 +77,19 @@ def build_manifest(
     )
     shards = shard_scenes(scenes, shard_size)
 
+    # Attach a compute-shape estimate per shard (pure metadata — no pixel reads). Scene count
+    # differs on the last shard, so each shard is estimated from its own membership.
+    from . import shape as shapemod
+
+    coll_id = catalog.resolve_collection(collection)
+    for sh in shards:
+        sh.shape = shapemod.shape_for(op, params, len(sh.scene_ids), coll_id)
+
     return Manifest(
         version=MANIFEST_VERSION,
         op=op,
         params=params,
-        collection=catalog.resolve_collection(collection),
+        collection=coll_id,
         aoi=aoi,
         output_uri=output_uri,
         scenes=scenes,
