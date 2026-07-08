@@ -14,10 +14,12 @@ written; progress lives in the object store.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from typing import Any
 
-MANIFEST_VERSION = 1
+# v2 adds an optional per-shard ``shape`` block (compute-shape estimate). Old manifests (no
+# shape) still load — the field defaults to None; consumers branch on version or on shape presence.
+MANIFEST_VERSION = 2
 
 
 @dataclass
@@ -40,6 +42,10 @@ class Shard:
 
     index: int
     scene_ids: list[str]
+    # Optional compute-shape estimate (bytes/RAM/seconds) for this shard — work-as-data a runner
+    # or truffle reads to size a box. Plain dict (like ``params``); see ``loam.shape``. None if the
+    # manifest predates shape estimation (v1) or the estimator produced nothing.
+    shape: dict[str, Any] | None = None
 
 
 @dataclass
@@ -61,9 +67,9 @@ class Manifest:
     @classmethod
     def from_json(cls, text: str) -> "Manifest":
         d = json.loads(text)
-        scenes = [Scene(**s) for s in d.pop("scenes", [])]
-        shards = [Shard(**s) for s in d.pop("shards", [])]
-        return cls(scenes=scenes, shards=shards, **d)
+        scenes = [Scene(**_known(Scene, s)) for s in d.pop("scenes", [])]
+        shards = [Shard(**_known(Shard, s)) for s in d.pop("shards", [])]
+        return cls(scenes=scenes, shards=shards, **_known(cls, d))
 
     def scenes_for(self, shard_index: int) -> list[Scene]:
         """Return the Scene objects belonging to a given shard index."""
@@ -87,6 +93,16 @@ def shard_scenes(scenes: list[Scene], shard_size: int) -> list[Shard]:
         chunk = scenes[start : start + shard_size]
         shards.append(Shard(index=i, scene_ids=[s.id for s in chunk]))
     return shards
+
+
+def _known(cls: type, d: dict[str, Any]) -> dict[str, Any]:
+    """Keep only keys that are fields of ``cls``.
+
+    Makes ``from_json`` tolerant of unknown keys, so a manifest written by a NEWER loam (extra
+    fields) still loads in an older one, and additive fields never break deserialization.
+    """
+    names = {f.name for f in fields(cls)}
+    return {k: v for k, v in d.items() if k in names}
 
 
 def _asdict(m: Manifest) -> dict[str, Any]:

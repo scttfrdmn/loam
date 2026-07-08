@@ -53,6 +53,57 @@ def test_bands_in_equation():
     assert "swir16" in indices.bands_in("(swir16 - nir) / (swir16 + nir)")
 
 
+def test_shape_band_math_ndvi():
+    from loam import shape
+
+    # NDVI reads nir,red (10m) + scl (20m). At target_res=100 all collapse to 1098 px/side.
+    s = shape.shape_for("band-math", {"indices": ["NDVI"], "target_res": 100.0}, 5, "sentinel-2-l2a")
+    side = int(10980 * 10 / 100)  # 1098
+    px = side * side
+    assert s["scenes"] == 5
+    assert s["bands_read"] == 3          # nir, red, scl
+    assert s["outputs"] == 1
+    assert s["approx_bytes_read"] == 5 * 3 * px * 4
+    # peak = one scene: max_i(bands)=2 inputs + 1 output + 1 slack, on the finest grid
+    assert s["peak_rss_bytes"] == px * (2 + 1 + 1) * 4
+
+
+def test_shape_multi_index_peak_uses_max_not_union():
+    from loam import shape
+
+    # NDVI(2) + BSI(2) + EVI(3): union of bands is larger than any single index. Peak RAM must be
+    # driven by max_i(n_bands_i)=3, NOT the union — a scene loads one index's bands at a time.
+    s = shape.shape_for(
+        "band-math", {"indices": ["NDVI", "BSI", "EVI"], "target_res": 100.0}, 10, "sentinel-2-l2a"
+    )
+    side = int(10980 * 10 / 100)
+    px = side * side
+    assert s["outputs"] == 3
+    assert s["peak_rss_bytes"] == px * (3 + 3 + 1) * 4  # max_i=3 inputs + 3 outputs + 1
+
+
+def test_shape_per_op_bands():
+    from loam import shape
+
+    # cloud-mask reads only scl; resample reads only its --bands (NO scl injected).
+    cm = shape.shape_for("cloud-mask", {"target_res": 100.0}, 4, "sentinel-2-l2a")
+    assert cm["bands_read"] == 1 and cm["outputs"] == 1
+    rs = shape.shape_for("resample", {"bands": ["red", "nir"], "target_res": 100.0}, 4, "sentinel-2-l2a")
+    assert rs["bands_read"] == 2 and rs["outputs"] == 2  # scl not counted
+
+
+def test_shape_target_res_scales_and_clamps():
+    from loam import shape
+
+    coarse = shape.shape_for("band-math", {"indices": ["NDVI"], "target_res": 100.0}, 1, "sentinel-2-l2a")
+    full = shape.shape_for("band-math", {"indices": ["NDVI"], "target_res": None}, 1, "sentinel-2-l2a")
+    # full-res reads far more bytes than 100 m
+    assert full["approx_bytes_read"] > coarse["approx_bytes_read"] * 50
+    # can't read finer than native: target_res below 10 m clamps to the 10 m grid (== full-res)
+    finer = shape.shape_for("band-math", {"indices": ["NDVI"], "target_res": 1.0}, 1, "sentinel-2-l2a")
+    assert finer["approx_bytes_read"] == full["approx_bytes_read"]
+
+
 def test_sharding_deterministic():
     scenes = [Scene(id=f"s{i}", datetime="2023-01-01", assets={}) for i in range(125)]
     shards = shard_scenes(scenes, 50)
@@ -73,10 +124,78 @@ def test_manifest_roundtrip():
         scenes=[Scene(id="s0", datetime="2023-01-01", assets={"red": "r", "nir": "n"})],
     )
     m.shards = shard_scenes(m.scenes, 50)
+    m.shards[0].shape = {"scenes": 1, "peak_rss_bytes": 123}
     m2 = Manifest.from_json(m.to_json())
     assert m2.op == "band-math"
     assert m2.scenes[0].assets["nir"] == "n"
     assert m2.scenes_for(0)[0].id == "s0"
+    assert m2.shards[0].shape == {"scenes": 1, "peak_rss_bytes": 123}
+
+
+def test_manifest_loads_old_and_unknown_keys():
+    # A v1 manifest (no shape) still loads (shape defaults None); a manifest with an unknown extra
+    # key still loads (from_json filters to known fields — forward-compat for additive fields).
+    import json
+
+    old = json.dumps({
+        "version": 1, "op": "cloud-mask", "params": {}, "collection": "sentinel-2-l2a",
+        "aoi": [0, 0, 1, 1], "output_uri": "s3://b/o/",
+        "scenes": [{"id": "s0", "datetime": "2023-01-01", "assets": {}}],
+        "shards": [{"index": 0, "scene_ids": ["s0"]}],
+    })
+    m = Manifest.from_json(old)
+    assert m.shards[0].shape is None
+
+    future = json.dumps({
+        "version": 99, "op": "cloud-mask", "params": {}, "collection": "sentinel-2-l2a",
+        "aoi": [0, 0, 1, 1], "output_uri": "s3://b/o/", "future_top_key": "ignored",
+        "scenes": [{"id": "s0", "datetime": "2023-01-01", "assets": {}, "future_scene_key": 1}],
+        "shards": [{"index": 0, "scene_ids": ["s0"], "shape": {"scenes": 1}, "future_key": 2}],
+    })
+    m2 = Manifest.from_json(future)  # must not raise on unknown keys
+    assert m2.shards[0].shape == {"scenes": 1}
+
+
+def test_build_manifest_attaches_shape(monkeypatch):
+    # build_manifest must populate each shard's shape (offline: fake the STAC search).
+    from loam import catalog, plan
+
+    fake_scenes = [Scene(id=f"s{i}", datetime="2023-01-01", assets={"nir": "n", "red": "r"})
+                   for i in range(3)]
+    monkeypatch.setattr(catalog, "search", lambda **kw: fake_scenes)
+
+    m = plan.build_manifest(
+        op="band-math", collection="sentinel-2", aoi=[0, 0, 1, 1],
+        start="2023-01-01", end="2023-12-31", indices=["NDVI"],
+        shard_size=2, output_uri="s3://b/o/",
+    )
+    assert m.version == 2
+    assert len(m.shards) == 2  # 3 scenes / 2
+    for sh in m.shards:
+        assert sh.shape is not None
+        assert sh.shape["scenes"] == len(sh.scene_ids)
+        assert sh.shape["bands_read"] == 3  # nir, red, scl
+    # last shard (1 scene) has smaller read estimate than the full one (2 scenes)
+    assert m.shards[1].shape["approx_bytes_read"] < m.shards[0].shape["approx_bytes_read"]
+
+
+def test_shape_module_does_no_io():
+    # The compute-shape path must never read pixels or hit the network: assert loam/shape.py
+    # imports none of the I/O modules (static AST scan, like tests/test_contract.py).
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parent.parent / "loam" / "shape.py"
+    tree = ast.parse(src.read_text())
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots |= {a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            roots.add(node.module.split(".")[0])
+    assert not (roots & {"rasterio", "pystac_client", "boto3"}), roots
+    # and no loam I/O modules
+    assert "ops" not in roots and "raster" not in roots and "catalog" not in roots
 
 
 # A synthetic georeferenced band, used to fake raster.read_band in ops. UTM-ish transform.
