@@ -28,10 +28,16 @@ def build_manifest(
     shard_size: int = 50,
     limit: int | None = None,
     fmt: str = "cog",
+    target_res: float | None = 100.0,
     stac_url: str = catalog.DEFAULT_STAC_URL,
 ) -> Manifest:
-    """Search, shard, and assemble a Manifest (does not write it — caller persists)."""
-    params: dict = {"format": fmt}
+    """Search, shard, and assemble a Manifest (does not write it — caller persists).
+
+    ``target_res`` (metres) sets the overview level ops read. Default 100m is fine for
+    continental-scale change detection; pass ``None`` for native full resolution when the
+    features of interest are small (e.g. Sentinel-2 10m for fairy-circle detection).
+    """
+    params: dict = {"format": fmt, "target_res": target_res}
     wanted: set[str] = {"scl"}  # always fetch SCL so ops can cloud-mask
 
     if op == "band-math":

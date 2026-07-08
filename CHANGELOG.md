@@ -6,6 +6,11 @@ versions follow semver.
 ## [Unreleased]
 
 ### Added
+- **CI + uv toolchain** (closes #1): GitHub Actions runs ruff + mypy + pytest on push/PR across
+  Python 3.10/3.11/3.12. loam standardizes on [uv](https://docs.astral.sh/uv/) — a committed
+  `uv.lock` pins the dependency set CI installs (`uv sync --locked`); README documents the
+  `uv sync --extra dev` / `uv run` dev loop. mypy target set to 3.12 so numpy 2.5's 3.12+ stub
+  grammar parses.
 - **Georeferenced output** (closes #5): ops now return a `Raster` (array + affine transform +
   CRS + nodata), and `run-shard` writes **Cloud-Optimized GeoTIFF** by default (`--format`
   `cog`|`gtiff`|`npy`). Downsampled reads scale the transform to the returned grid, so outputs

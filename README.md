@@ -1,5 +1,7 @@
 # loam
 
+[![CI](https://github.com/scttfrdmn/loam/actions/workflows/ci.yml/badge.svg)](https://github.com/scttfrdmn/loam/actions/workflows/ci.yml)
+
 **An open, execution-agnostic library of geospatial operations — cloud-mask and band-math over
 Sentinel-2 — that replaces the parts of Amazon SageMaker Geospatial which closed to new
 customers on 2026-07-30. Runs anywhere; pairs naturally with the
@@ -46,9 +48,23 @@ that don't exist yet — because a runner only has to run one well-behaved comma
 
 ```bash
 pip install loam            # once published
-# or from source:
-pip install -e '.[dev]'
 ```
+
+### Develop
+
+loam standardizes on [uv](https://docs.astral.sh/uv/). The pinned `uv.lock` is what CI
+installs, so a local checkout runs the exact resolved dependency set:
+
+```bash
+uv sync --extra dev              # create .venv + install loam and dev tools from the lock
+uv run ruff check loam/          # lint
+uv run mypy loam/                # type-check
+uv run pytest -q                 # tests (fully offline — no network/AWS)
+uv run loam indices              # run the CLI
+```
+
+`uv.lock` is committed and CI uses `uv sync --locked`; regenerate it with `uv lock` after
+changing dependencies in `pyproject.toml`.
 
 ## Use
 

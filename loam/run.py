@@ -53,15 +53,22 @@ def _save_raster(output_uri: str, index: int, scene_id: str, name: str,
 
 
 def _process_scene(op: str, params: dict, scene: Scene) -> dict[str, Raster]:
-    """Apply the manifest's op to one scene; return {output_name: Raster}."""
+    """Apply the manifest's op to one scene; return {output_name: Raster}.
+
+    ``params["target_res"]`` (metres) controls the overview level read: None = native full
+    resolution (e.g. 10m Sentinel-2 — needed to resolve small features), a number = downsample
+    for speed/memory. It defaults to None here because the SAM/fairy-circle use case needs full
+    res; the CLI default (100m) is set at plan time in plan.build_manifest.
+    """
+    target_res = params.get("target_res")
     if op == "band-math":
         out: dict[str, Raster] = {}
         for spec in params["indices"]:
             idx = parse_spec(spec)
-            out[idx.name] = ops.band_math(scene.assets, idx)
+            out[idx.name] = ops.band_math(scene.assets, idx, target_res=target_res)
         return out
     if op == "cloud-mask":
-        return {"mask": ops.cloud_mask(scene.assets)}
+        return {"mask": ops.cloud_mask(scene.assets, target_res=target_res)}
     raise ValueError(f"unknown op {op!r}")
 
 
