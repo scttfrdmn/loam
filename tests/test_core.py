@@ -88,6 +88,27 @@ def test_band_math_math(monkeypatch):
     assert out.transform[0] == 10.0 and out.transform[2] == 500000.0
 
 
+def test_band_math_mixed_resolution(monkeypatch):
+    # BSI mixes swir16 (20 m → half grid) with nir (10 m → full grid). loam must resample the
+    # coarse band onto the fine grid, not slice — regression test for the Tut01 smoke bug.
+    from loam import ops
+    from loam.raster import Raster
+
+    def fake(href, target_res=None):
+        if href == "swir16":
+            data = np.full((2, 2), 2.0, np.float32)      # coarse 20 m band
+            return Raster(data, (20.0, 0, 0, 0, -20.0, 0), "EPSG:32629", None)
+        # nir on the fine 10 m grid
+        return Raster(np.full((4, 4), 6.0, np.float32), (10.0, 0, 0, 0, -10.0, 0), "EPSG:32629", None)
+
+    monkeypatch.setattr(ops, "_read_band_raster", fake)
+    out = ops.band_math({"swir16": "swir16", "nir": "nir"}, indices.resolve("BSI"), scl_mask=False)
+    # BSI = (swir16 - nir)/(swir16 + nir) = (2-6)/(2+6) = -0.5, on the FINE 4x4 grid
+    assert out.data.shape == (4, 4)
+    assert np.allclose(out.data, -0.5)
+    assert out.transform[0] == 10.0  # ref (fine) transform carried
+
+
 def test_run_shard_idempotent_and_geotiff(tmp_path, monkeypatch):
     from loam import ops, run, state
 

@@ -33,11 +33,22 @@ def read_band(href: str, *, target_res: float | None = None) -> np.ndarray:
     return _read_band_raster(href, target_res=target_res).data
 
 
-def _align(arrays: list[np.ndarray]) -> list[np.ndarray]:
-    """Clip a set of band arrays to their common (min) shape so arithmetic broadcasts."""
-    min_h = min(a.shape[0] for a in arrays)
-    min_w = min(a.shape[1] for a in arrays)
-    return [a[:min_h, :min_w] for a in arrays]
+def _resample_to(arr: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Nearest-neighbour resample a 2D array to ``shape``.
+
+    Sentinel-2 bands have different native resolutions (NIR/red 10 m, SWIR/SCL 20 m, etc.), so
+    band-math like BSI (swir16 vs nir) or NDSI (green vs swir16) mixes grids. We resample every
+    band up/down to the finest grid before arithmetic. Nearest-neighbour keeps it dependency-
+    free and is appropriate for index math over categorical-ish spectral ratios; the coarse
+    band's pixels are exactly replicated onto the fine grid (no invented values). Same shape →
+    returned unchanged (the common 10 m-only case, e.g. NDVI, pays nothing).
+    """
+    if arr.shape == shape:
+        return arr
+    h, w = shape
+    ri = (np.arange(h) * arr.shape[0] // h).clip(0, arr.shape[0] - 1)
+    ci = (np.arange(w) * arr.shape[1] // w).clip(0, arr.shape[1] - 1)
+    return arr[np.ix_(ri, ci)]
 
 
 def band_math(
@@ -60,16 +71,17 @@ def band_math(
         raise KeyError(f"scene missing bands {sorted(missing)} for {index.name}")
 
     rasters = {b: _read_band_raster(assets[b], target_res=target_res) for b in needed}
-    # Reference georeferencing = whichever band has the largest grid (finest); we clip all to
-    # the common (min) shape, and that band's transform is valid for the clipped top-left.
+    # Reference grid = the finest band (largest pixel count). Resample every band ONTO that grid
+    # so mixed-resolution math (e.g. BSI: 20 m swir16 with 10 m nir) broadcasts correctly and
+    # stays geographically aligned. The ref band's transform is exact for the output.
     ref = max(rasters.values(), key=lambda r: r.height * r.width)
-    aligned = _align([r.data for r in rasters.values()])
-    env = dict(zip(rasters.keys(), aligned))
+    ref_shape = (ref.height, ref.width)
+    env = {b: _resample_to(r.data, ref_shape) for b, r in rasters.items()}
 
     cloud = None
     if scl_mask and "scl" in assets:
         scl = _read_band_raster(assets["scl"], target_res=target_res).data
-        scl = _align([scl, aligned[0]])[0]
+        scl = _resample_to(scl, ref_shape)
         cloud = np.isin(np.rint(scl).astype(int), list(_SCL_CLOUD))
 
     # Evaluate the equation in a numpy namespace. Equations are our own catalog constants or a
