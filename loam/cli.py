@@ -56,6 +56,10 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         end=args.end,
         output_uri=args.output,
         indices=args.indices.split(",") if args.indices else None,
+        bands=args.bands.split(",") if args.bands else None,
+        dst_crs=args.dst_crs,
+        dst_res=args.dst_res,
+        resampling=args.resampling,
         max_cloud=args.max_cloud,
         shard_size=args.shard_size,
         limit=args.limit,
@@ -129,12 +133,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     pp = sub.add_parser("plan", help="search + shard into a manifest")
-    pp.add_argument("--op", required=True, choices=["band-math", "cloud-mask"])
+    pp.add_argument("--op", required=True, choices=["band-math", "cloud-mask", "resample"])
     pp.add_argument("--collection", default="sentinel-2")
     pp.add_argument("--aoi", type=_aoi, required=True, help="W,S,E,N (WGS84)")
     pp.add_argument("--start", required=True, help="YYYY-MM-DD or RFC3339")
     pp.add_argument("--end", required=True)
     pp.add_argument("--indices", help="comma list, e.g. NDVI,BSI (band-math)")
+    pp.add_argument("--bands", help="comma list of bands to reproject, e.g. red,nir (resample)")
+    pp.add_argument("--dst-crs", dest="dst_crs", help="target CRS, e.g. EPSG:4326 (resample)")
+    pp.add_argument("--dst-res", dest="dst_res", type=float, default=None,
+                    help="target pixel size in dst-crs units (resample; omit to preserve count)")
+    pp.add_argument("--resampling", default="bilinear",
+                    help="resampling method: nearest|bilinear|cubic|average|… (resample)")
     pp.add_argument("--max-cloud", type=float, default=None)
     pp.add_argument("--shard-size", type=int, default=50)
     pp.add_argument("--limit", type=int, default=None)

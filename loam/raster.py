@@ -80,6 +80,65 @@ def read_band(
         )
 
 
+def reproject_raster(
+    raster: Raster,
+    *,
+    dst_crs: str,
+    dst_res: float | None = None,
+    resampling: str = "bilinear",
+) -> Raster:
+    """Reproject/resample a Raster to ``dst_crs`` (and optionally ``dst_res`` metres/deg).
+
+    Uses ``rasterio.warp`` to warp onto a grid derived from the source footprint. If ``dst_res``
+    is given it fixes the output pixel size; otherwise rasterio picks a resolution that preserves
+    the source's pixel count. ``resampling`` is any ``rasterio.enums.Resampling`` name
+    (nearest|bilinear|cubic|average|…) — use ``nearest`` for categorical bands (e.g. SCL).
+    Masked pixels stay NaN. This is rasterio detail, so it lives here, not in ``ops``.
+    """
+    import rasterio
+    from rasterio.transform import array_bounds
+    from rasterio.warp import Resampling, calculate_default_transform, reproject
+
+    if raster.crs is None:
+        raise ValueError("cannot reproject a raster with no CRS")
+    try:
+        method = Resampling[resampling]
+    except KeyError as e:
+        raise ValueError(f"unknown resampling {resampling!r}") from e
+
+    src_transform = rasterio.Affine(*raster.transform)
+    h, w = raster.height, raster.width
+    left, bottom, right, top = array_bounds(h, w, src_transform)
+
+    kw = {"resolution": dst_res} if dst_res is not None else {}
+    dst_transform, dst_w, dst_h = calculate_default_transform(
+        raster.crs, dst_crs, w, h, left, bottom, right, top, **kw
+    )
+
+    nodata = raster.nodata if raster.nodata is not None else float("nan")
+    dst = np.full((dst_h, dst_w), nodata, dtype=raster.data.dtype)
+    reproject(
+        source=raster.data,
+        destination=dst,
+        src_transform=src_transform,
+        src_crs=raster.crs,
+        dst_transform=dst_transform,
+        dst_crs=dst_crs,
+        src_nodata=raster.nodata,
+        dst_nodata=nodata,
+        resampling=method,
+    )
+    return Raster(
+        data=dst,
+        transform=(
+            dst_transform.a, dst_transform.b, dst_transform.c,
+            dst_transform.d, dst_transform.e, dst_transform.f,
+        ),
+        crs=dst_crs,
+        nodata=raster.nodata,
+    )
+
+
 def write_geotiff(uri_or_path: str, raster: Raster, *, cog: bool = True) -> bytes:
     """Serialize a Raster to (COG) GeoTIFF bytes and return them.
 

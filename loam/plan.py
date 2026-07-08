@@ -24,6 +24,10 @@ def build_manifest(
     end: str,
     output_uri: str,
     indices: list[str] | None = None,
+    bands: list[str] | None = None,
+    dst_crs: str | None = None,
+    dst_res: float | None = None,
+    resampling: str = "bilinear",
     max_cloud: float | None = None,
     shard_size: int = 50,
     limit: int | None = None,
@@ -51,8 +55,15 @@ def build_manifest(
             wanted |= bands_in(d.equation)
     elif op == "cloud-mask":
         pass  # only needs scl, already in wanted
+    elif op == "resample":
+        if not bands:
+            raise ValueError("resample requires --bands")
+        if not dst_crs:
+            raise ValueError("resample requires --dst-crs")
+        params.update(bands=bands, dst_crs=dst_crs, dst_res=dst_res, resampling=resampling)
+        wanted |= set(bands)
     else:
-        raise ValueError(f"unknown op {op!r} (known: band-math, cloud-mask)")
+        raise ValueError(f"unknown op {op!r} (known: band-math, cloud-mask, resample)")
 
     scenes = catalog.search(
         collection=collection,

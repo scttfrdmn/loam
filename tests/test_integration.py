@@ -121,3 +121,31 @@ def test_end_to_end_run_shard_over_real_cogs(tmp_path):
 
     # Second run is a no-op (checkpoint exists) — the spot-safe resume property, over the wire.
     assert run.run_shard(manifest_uri, 0)["status"] == "skipped"
+
+
+def test_end_to_end_resample_over_real_cogs(tmp_path):
+    """Resample a real Sentinel-2 band to WGS84 via /vsicurl → reprojected COG on disk."""
+    import rasterio
+
+    from loam import plan, run, state
+
+    out = str(tmp_path / "out")
+    manifest_uri = str(tmp_path / "manifest.json")
+
+    m = plan.build_manifest(
+        op="resample", collection="sentinel-2", aoi=_AOI, start=_START, end=_END,
+        bands=["red"], dst_crs="EPSG:4326", resampling="bilinear",
+        max_cloud=20, shard_size=2, limit=1,
+        target_res=200.0,  # coarse overview → tiny read
+        output_uri=out,
+    )
+    assert len(m.scenes) >= 1
+    plan.write_manifest(m, manifest_uri)
+
+    summary = run.run_shard(manifest_uri, 0)
+    assert summary["status"] == "done"
+    assert not summary["failed"], summary["failed"]
+
+    tif = state.output_uri_for(out, 0, f"{m.scenes[0].id}__red.tif")
+    with rasterio.open(tif) as src:
+        assert src.crs.to_string() == "EPSG:4326"  # reprojected off UTM

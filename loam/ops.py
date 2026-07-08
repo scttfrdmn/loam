@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 
 from .indices import IndexDef, bands_in, safe_eval
-from .raster import Raster, read_band as _read_band_raster
+from .raster import Raster, read_band as _read_band_raster, reproject_raster
 
 # Sentinel-2 L2A Scene Classification (SCL) values that are cloud / cloud-shadow / cirrus.
 # 3=cloud shadow, 8=cloud medium prob, 9=cloud high prob, 10=thin cirrus, 11=snow(optional).
@@ -104,3 +104,28 @@ def cloud_mask(assets: dict[str, str], *, target_res: float | None = 100.0) -> R
     scl = _read_band_raster(assets["scl"], target_res=target_res)
     mask = np.isin(np.rint(scl.data).astype(int), list(_SCL_CLOUD)).astype(np.uint8)
     return Raster(data=mask, transform=scl.transform, crs=scl.crs, nodata=None)
+
+
+def resample(
+    assets: dict[str, str],
+    bands: list[str],
+    *,
+    dst_crs: str,
+    dst_res: float | None = None,
+    resampling: str = "bilinear",
+    target_res: float | None = None,
+) -> dict[str, Raster]:
+    """Reproject/resample each requested band to ``dst_crs`` (+ optional ``dst_res``).
+
+    One georeferenced Raster per band. ``target_res`` still controls the overview level read (so
+    we fetch few bytes); ``dst_res``/``dst_crs`` set the output grid. All rasterio/warp detail is
+    in ``raster.reproject_raster`` — this just reads and delegates per band.
+    """
+    missing = set(bands) - assets.keys()
+    if missing:
+        raise KeyError(f"scene missing bands {sorted(missing)} for resample")
+    out: dict[str, Raster] = {}
+    for b in bands:
+        src = _read_band_raster(assets[b], target_res=target_res)
+        out[b] = reproject_raster(src, dst_crs=dst_crs, dst_res=dst_res, resampling=resampling)
+    return out
