@@ -1,8 +1,9 @@
 # loam
 
-**Geospatial operations for the [spore.host](https://github.com/spore-host) substrate — an
-open, execution-agnostic replacement for the parts of Amazon SageMaker Geospatial that closed
-to new customers on 2026-07-30.**
+**An open, execution-agnostic library of geospatial operations — cloud-mask and band-math over
+Sentinel-2 — that replaces the parts of Amazon SageMaker Geospatial which closed to new
+customers on 2026-07-30. Runs anywhere; pairs naturally with the
+[spore.host](https://github.com/spore-host) substrate (`spawn` / `truffle` / `lagotto`).**
 
 SageMaker Geospatial welded two things together: a catalog of **operations** (cloud-mask,
 band-math, composites over Sentinel-2) and an opaque, capacity-starved, 24-hour-capped
