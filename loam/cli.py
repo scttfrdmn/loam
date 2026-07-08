@@ -60,6 +60,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         shard_size=args.shard_size,
         limit=args.limit,
         fmt=args.format,
+        target_res=args.target_res,
         stac_url=args.stac_url,
     )
     write_manifest(manifest, args.manifest, region=args.region)
@@ -139,6 +140,11 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--limit", type=int, default=None)
     pp.add_argument("--format", choices=["cog", "gtiff", "npy"], default="cog",
                     help="output raster format (default cog: georeferenced Cloud-Optimized GeoTIFF)")
+    res = pp.add_mutually_exclusive_group()
+    res.add_argument("--target-res", type=float, default=100.0, dest="target_res",
+                     help="resolution in metres to read (default 100; overview-based, fewer bytes)")
+    res.add_argument("--full-res", action="store_const", const=None, dest="target_res",
+                     help="read native full resolution (e.g. Sentinel-2 10m) — for small features")
     pp.add_argument("--output", required=True, help="s3://bucket/prefix/ for shard outputs")
     pp.add_argument("--manifest", required=True, help="s3://... where to write the manifest")
     pp.add_argument("--stac-url", default="https://earth-search.aws.element84.com/v1")

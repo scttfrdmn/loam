@@ -127,6 +127,31 @@ def test_run_shard_idempotent_and_geotiff(tmp_path, monkeypatch):
     assert s2["status"] == "skipped"
 
 
+def test_target_res_threads_to_ops(tmp_path, monkeypatch):
+    # The manifest's target_res must reach ops.band_math (None = full res for small features).
+    from loam import ops, run, state
+
+    seen = {}
+
+    def spy(assets, index, *, target_res=100.0, scl_mask=True):
+        seen["target_res"] = target_res
+        return _fake_raster(0.5)
+
+    out = str(tmp_path / "out")
+    scene = Scene(id="s0", datetime="2023-01-01", assets={"nir": "n", "red": "r"})
+    m = Manifest(
+        version=MANIFEST_VERSION, op="band-math",
+        params={"indices": ["NDVI"], "format": "npy", "target_res": None},
+        collection="sentinel-2-l2a", aoi=[0, 0, 1, 1], output_uri=out, scenes=[scene],
+    )
+    m.shards = shard_scenes(m.scenes, 50)
+    mu = str(tmp_path / "m.json")
+    state.put_text(mu, m.to_json())
+    monkeypatch.setattr(ops, "band_math", spy)
+    run.run_shard(mu, 0)
+    assert seen["target_res"] is None  # full-res request threaded through
+
+
 def test_run_shard_npy_format(tmp_path, monkeypatch):
     from loam import ops, run, state
 
