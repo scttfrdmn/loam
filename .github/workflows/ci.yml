@@ -14,6 +14,12 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12']
+    env:
+      # Pin uv to the matrix interpreter for every step. Without this, uv honors the
+      # committed .python-version (3.12), so on the 3.10/3.11 legs `uv run` would see a
+      # version mismatch and silently recreate the venv — dropping the dev extras and
+      # breaking `uv run ruff`. The run steps below use --no-sync to reuse this venv.
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
@@ -24,13 +30,13 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Install
-        run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
+        run: uv sync --locked --extra dev
 
       - name: Lint (ruff)
-        run: uv run ruff check loam/
+        run: uv run --no-sync ruff check loam/
 
       - name: Type-check (mypy)
-        run: uv run mypy loam/
+        run: uv run --no-sync mypy loam/
 
       - name: Test (pytest)
-        run: uv run pytest -q
+        run: uv run --no-sync pytest -q
