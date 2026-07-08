@@ -135,6 +135,12 @@ prospecting on Sentinel-2). Roadmap: temporal composites & geomosaics (`stacksta
 resampling, vector enrichment, an arm64 container for cheap Graviton prep, a `titiler`/`leafmap`
 viewer.
 
+## Contributing
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for dev setup (uv), tests, and the checks CI runs, and
+**[docs/DESIGN.md](docs/DESIGN.md)** for why loam is execution-agnostic — the one contract to
+preserve when extending it (enforced by `tests/test_contract.py`).
+
 ## License
 
 Apache-2.0.
