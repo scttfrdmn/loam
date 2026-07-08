@@ -5,6 +5,15 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Security
+- **Safe band-math evaluation** (closes #4): `band_math` no longer uses Python `eval`. A custom
+  `NAME=equation` index spec — or an equation string in a manifest of unknown origin — is now
+  evaluated by a zero-dependency AST allowlist (`indices.safe_eval`) that permits only numeric
+  literals, band names, and `+ - * / **` / unary ±. Anything else (calls, attribute/dunder
+  access, subscripts, comparisons, non-numeric constants, …) raises `ValueError` and never
+  executes. `parse_spec` validates at `loam plan` time so a bad spec fails early. All 7 catalog
+  equations compute byte-identically.
+
 ### Added
 - **CI + uv toolchain** (closes #1): GitHub Actions runs ruff + mypy + pytest on push/PR across
   Python 3.10/3.11/3.12. loam standardizes on [uv](https://docs.astral.sh/uv/) — a committed

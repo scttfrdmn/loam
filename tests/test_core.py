@@ -109,6 +109,82 @@ def test_band_math_mixed_resolution(monkeypatch):
     assert out.transform[0] == 10.0  # ref (fine) transform carried
 
 
+def test_safe_eval_all_catalog_equations():
+    # Every catalog equation must compute identically under the AST evaluator. Feed synthetic
+    # per-band scalars and compare to the plain Python arithmetic (the acceptance guard).
+    env = {b: float(i + 2) for i, b in enumerate(
+        ["coastal", "blue", "green", "red", "nir", "swir16", "swir22"]
+    )}
+    blue, green, red, nir, swir16, swir22 = (
+        env["blue"], env["green"], env["red"], env["nir"], env["swir16"], env["swir22"]
+    )
+    expected = {
+        "NDVI": (nir - red) / (nir + red),
+        "BSI": (swir16 - nir) / (swir16 + nir),
+        "EVI": 2.5 * (nir - red) / (nir + 6.0 * red - 7.5 * blue + 1.0),
+        "MNDWI": (green - swir16) / (green + swir16),
+        "NDBI": (swir16 - nir) / (swir16 + nir),
+        "NBR": (nir - swir22) / (nir + swir22),
+        "NDSI": (green - swir16) / (green + swir16),
+    }
+    for name, d in indices.INDICES.items():
+        assert indices.safe_eval(d.equation, env) == pytest.approx(expected[name]), name
+
+
+def test_safe_eval_power_and_unary():
+    env = {"nir": 3.0, "red": 2.0}
+    assert indices.safe_eval("nir ** 2", env) == pytest.approx(9.0)
+    assert indices.safe_eval("-nir + red", env) == pytest.approx(-1.0)
+
+
+@pytest.mark.parametrize("equation", [
+    '__import__("os").system("echo pwned")',  # Call
+    "().__class__.__bases__",                  # Attribute
+    "nir.__class__",                            # Attribute on a band
+    "nir[0]",                                   # Subscript
+    "nir if red else blue",                    # IfExp
+    "[nir]",                                     # List
+    "(nir := red)",                             # walrus
+    "nir % red",                                # Mod
+    "nir // red",                               # FloorDiv
+    "nir @ red",                                # MatMult
+    "nir | red",                                # BitOr
+    "nir ^ red",                                # BitXor
+    "~nir",                                      # Invert
+    "nir and red",                              # BoolOp
+    "nir > red",                                # Compare
+    "True",                                      # bool constant
+    "None",                                      # None constant
+    '"nir"',                                    # str constant
+    "1j",                                        # complex constant
+])
+def test_safe_eval_rejects_hostile(equation):
+    # A hostile / out-of-grammar equation must raise ValueError and NEVER execute.
+    with pytest.raises(ValueError):
+        indices.safe_eval(equation, {"nir": 1.0, "red": 1.0, "blue": 1.0})
+
+
+def test_safe_eval_unknown_band():
+    with pytest.raises(ValueError, match="unknown band"):
+        indices.safe_eval("foo + nir", {"nir": 1.0})
+
+
+@pytest.mark.parametrize("equation", ["nir +", ""])
+def test_safe_eval_malformed_syntax(equation):
+    # SyntaxError from ast.parse is surfaced as ValueError (the caller's contract).
+    with pytest.raises(ValueError, match="invalid equation"):
+        indices.safe_eval(equation, {"nir": 1.0})
+
+
+def test_parse_spec_rejects_hostile_equation_at_plan_time():
+    # A malicious custom index fails at parse_spec (plan time) — no numpy, no env, no execution.
+    with pytest.raises(ValueError):
+        indices.parse_spec('BAD=__import__("os").system("echo pwned")')
+    # a legitimate custom equation still parses
+    d = indices.parse_spec("NDWI=(green - nir) / (green + nir)")
+    assert d.name == "NDWI"
+
+
 def test_run_shard_idempotent_and_geotiff(tmp_path, monkeypatch):
     from loam import ops, run, state
 
@@ -195,7 +271,7 @@ def test_run_shard_npy_format(tmp_path, monkeypatch):
 
 
 def test_status_from_store(tmp_path):
-    from loam import run, state, plan
+    from loam import state, plan
 
     out = str(tmp_path / "out")
     scenes = [Scene(id=f"s{i}", datetime="2023-01-01", assets={}) for i in range(3)]
