@@ -125,6 +125,47 @@ def test_band_math_mixed_resolution(monkeypatch):
     assert out.transform[0] == 10.0  # ref (fine) transform carried
 
 
+def test_reproject_raster_changes_crs():
+    # A UTM raster reprojected to WGS84 must come back tagged EPSG:4326 with a lon/lat transform.
+    from loam.raster import reproject_raster
+
+    src = _fake_raster(0.5, 32, 32)  # EPSG:32629, 10 m
+    out = reproject_raster(src, dst_crs="EPSG:4326", resampling="nearest")
+    assert out.crs == "EPSG:4326"
+    assert out.data.ndim == 2 and out.data.size > 0
+    # WGS84 pixel size is in degrees (far below 1), unlike the 10 m source.
+    assert abs(out.transform[0]) < 1.0
+    # value preserved (constant field, nearest resampling)
+    finite = out.data[np.isfinite(out.data)]
+    assert finite.size > 0 and np.allclose(finite, 0.5)
+
+
+def test_resample_op_per_band(monkeypatch):
+    from loam import ops
+
+    monkeypatch.setattr(ops, "_read_band_raster",
+                        lambda href, target_res=None: _fake_raster(1.0, 16, 16))
+    out = ops.resample(
+        {"red": "red", "nir": "nir"}, ["red", "nir"],
+        dst_crs="EPSG:4326", resampling="nearest",
+    )
+    assert set(out) == {"red", "nir"}
+    for r in out.values():
+        assert r.crs == "EPSG:4326"
+
+
+def test_resample_missing_band_raises(monkeypatch):
+    from loam import ops
+    with pytest.raises(KeyError, match="missing bands"):
+        ops.resample({"red": "red"}, ["red", "nir"], dst_crs="EPSG:4326")
+
+
+def test_resample_bad_method_raises():
+    from loam.raster import reproject_raster
+    with pytest.raises(ValueError, match="unknown resampling"):
+        reproject_raster(_fake_raster(1.0), dst_crs="EPSG:4326", resampling="nope")
+
+
 def test_safe_eval_all_catalog_equations():
     # Every catalog equation must compute identically under the AST evaluator. Feed synthetic
     # per-band scalars and compare to the plain Python arithmetic (the acceptance guard).
@@ -240,6 +281,35 @@ def test_run_shard_idempotent_and_geotiff(tmp_path, monkeypatch):
     # second run is a no-op (checkpoint exists) — the spot-safe resume property
     s2 = run.run_shard(manifest_uri, 0)
     assert s2["status"] == "skipped"
+
+
+def test_run_shard_resample_end_to_end(tmp_path, monkeypatch):
+    # The resample op through the full manifest→run path: reprojected COGs, one per band.
+    import rasterio
+
+    from loam import ops, run, state
+
+    out = str(tmp_path / "out")
+    scene = Scene(id="scene0", datetime="2023-01-01", assets={"red": "red", "nir": "nir"})
+    m = Manifest(
+        version=MANIFEST_VERSION, op="resample",
+        params={"format": "cog", "bands": ["red", "nir"], "dst_crs": "EPSG:4326",
+                "dst_res": None, "resampling": "nearest"},
+        collection="sentinel-2-l2a", aoi=[0, 0, 1, 1], output_uri=out, scenes=[scene],
+    )
+    m.shards = shard_scenes(m.scenes, 50)
+    manifest_uri = str(tmp_path / "manifest.json")
+    state.put_text(manifest_uri, m.to_json())
+    monkeypatch.setattr(ops, "_read_band_raster",
+                        lambda href, target_res=None: _fake_raster(1.0, 64, 64))
+
+    s = run.run_shard(manifest_uri, 0)
+    assert s["status"] == "done"
+    assert s["outputs"] == 2  # one COG per band
+    for band in ("red", "nir"):
+        tif = state.output_uri_for(out, 0, f"scene0__{band}.tif")
+        with rasterio.open(tif) as src:
+            assert src.crs.to_string() == "EPSG:4326"
 
 
 def test_target_res_threads_to_ops(tmp_path, monkeypatch):

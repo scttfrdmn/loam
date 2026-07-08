@@ -6,6 +6,12 @@ versions follow semver.
 ## [Unreleased]
 
 ### Added
+- **Resample / reproject op** (closes #22): `loam plan --op resample --bands red,nir
+  --dst-crs EPSG:4326 [--dst-res R] [--resampling bilinear|nearest|…]` reprojects each requested
+  band to a target CRS/resolution and writes georeferenced COGs — one per band. Warp detail lives
+  in `raster.reproject_raster` (rasterio.warp); the overview-read path is preserved so bytes read
+  stay bounded. A core SageMaker-parity capability and a clean-grid prerequisite for temporal
+  composites (#6).
 - **More built-in indices** (closes #23): the band-math catalog gains NDWI (McFeeters), SAVI,
   GNDVI, NDMI, NDRE, and ARVI (7 → 13), each with a cited equation, so users get them by name
   without a `NAME=equation` custom spec. A test asserts every catalog equation validates under the

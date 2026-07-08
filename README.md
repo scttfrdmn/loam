@@ -79,7 +79,7 @@ LOAM_LIVE_TESTS=1 uv run pytest -m integration   # hits the network; skipped by 
 ## Use
 
 ```bash
-loam indices                # the band-math catalog (NDVI, BSI, EVI, MNDWI, NDBI, NBR, NDSI)
+loam indices                # the band-math catalog (NDVI, EVI, SAVI, NDWI, NDMI, NDRE, …)
 loam collections            # known STAC collections
 
 # 1. PLAN — search + shard into a manifest (no compute)

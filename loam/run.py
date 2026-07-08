@@ -69,6 +69,15 @@ def _process_scene(op: str, params: dict, scene: Scene) -> dict[str, Raster]:
         return out
     if op == "cloud-mask":
         return {"mask": ops.cloud_mask(scene.assets, target_res=target_res)}
+    if op == "resample":
+        return ops.resample(
+            scene.assets,
+            params["bands"],
+            dst_crs=params["dst_crs"],
+            dst_res=params.get("dst_res"),
+            resampling=params.get("resampling", "bilinear"),
+            target_res=target_res,
+        )
     raise ValueError(f"unknown op {op!r}")
 
 
