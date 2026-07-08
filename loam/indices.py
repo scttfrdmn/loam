@@ -45,6 +45,23 @@ INDICES: dict[str, IndexDef] = {
     "NDBI": IndexDef("NDBI", "(swir16 - nir) / (swir16 + nir)", "Normalized Difference Built-up Index"),
     "NBR": IndexDef("NBR", "(nir - swir22) / (nir + swir22)", "Normalized Burn Ratio"),
     "NDSI": IndexDef("NDSI", "(green - swir16) / (green + swir16)", "Normalized Difference Snow Index"),
+    # Additional well-known indices (curated so users get them by name; equation sources noted).
+    # NDWI: McFeeters 1996, open-water delineation (distinct from Gao's NDMI below).
+    "NDWI": IndexDef("NDWI", "(green - nir) / (green + nir)", "Normalized Difference Water Index (McFeeters)"),
+    # SAVI: Huete 1988, soil-adjusted (L=0.5 canopy constant baked in).
+    "SAVI": IndexDef("SAVI", "1.5 * (nir - red) / (nir + red + 0.5)", "Soil-Adjusted Vegetation Index (L=0.5)"),
+    # GNDVI: Gitelson 1996, green-based, sensitive to chlorophyll.
+    "GNDVI": IndexDef("GNDVI", "(nir - green) / (nir + green)", "Green Normalized Difference Vegetation Index"),
+    # NDMI: Gao 1996, vegetation/canopy moisture (nir vs swir16).
+    "NDMI": IndexDef("NDMI", "(nir - swir16) / (nir + swir16)", "Normalized Difference Moisture Index"),
+    # NDRE: Barnes 2000, red-edge chlorophyll (needs the rededge1 band).
+    "NDRE": IndexDef("NDRE", "(nir - rededge1) / (nir + rededge1)", "Normalized Difference Red-Edge Index"),
+    # ARVI: Kaufman & Tanre 1992, atmospherically resistant (blue corrects red).
+    "ARVI": IndexDef(
+        "ARVI",
+        "(nir - (2.0*red - blue)) / (nir + (2.0*red - blue))",
+        "Atmospherically Resistant Vegetation Index",
+    ),
 }
 
 # Bands that appear in any equation above — the set a scene must resolve hrefs for.
