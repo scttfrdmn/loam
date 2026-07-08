@@ -3,6 +3,17 @@
 All notable changes to loam are documented here. Format loosely follows Keep a Changelog;
 versions follow semver.
 
+## [Unreleased]
+
+### Added
+- **Georeferenced output** (closes #5): ops now return a `Raster` (array + affine transform +
+  CRS + nodata), and `run-shard` writes **Cloud-Optimized GeoTIFF** by default (`--format`
+  `cog`|`gtiff`|`npy`). Downsampled reads scale the transform to the returned grid, so outputs
+  are georeferenced at the correct resolution. New `loam/raster.py` owns all rasterio write
+  detail (read → compute → write GeoTIFF via an in-memory dataset, no filesystem touch).
+  Required for GDAL/QGIS use and for the fieldwork SAM step (Tutorial 01), which georeferences
+  detections from the output transform.
+
 ## [0.1.0] — unreleased
 
 Initial Tier-1 MVP. An execution-agnostic open replacement for the operations half of Amazon

@@ -27,10 +27,11 @@ def build_manifest(
     max_cloud: float | None = None,
     shard_size: int = 50,
     limit: int | None = None,
+    fmt: str = "cog",
     stac_url: str = catalog.DEFAULT_STAC_URL,
 ) -> Manifest:
     """Search, shard, and assemble a Manifest (does not write it — caller persists)."""
-    params: dict = {}
+    params: dict = {"format": fmt}
     wanted: set[str] = {"scl"}  # always fetch SCL so ops can cloud-mask
 
     if op == "band-math":

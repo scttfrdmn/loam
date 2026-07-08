@@ -11,6 +11,11 @@ for-loop on a laptop. It is:
                    "checkpoint exists" strictly implies "output is safe".
 
 That's the whole contract. loam never launches this; a runner does.
+
+Output format (``params["format"]`` on the manifest, default ``cog``):
+  * ``cog`` / ``gtiff`` — georeferenced (Cloud-Optimized) GeoTIFF (opens in GDAL/QGIS; the
+    format downstream geo tools expect, e.g. the fieldwork SAM prep step).
+  * ``npy`` — headerless NumPy array, for the fast/no-geo path.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import numpy as np
 from . import ops, state
 from .indices import parse_spec
 from .manifest import Manifest, Scene
+from .raster import Raster, write_geotiff
 
 
 def _save_npy(uri: str, arr: np.ndarray, *, region: str | None) -> None:
@@ -31,16 +37,31 @@ def _save_npy(uri: str, arr: np.ndarray, *, region: str | None) -> None:
     state.put_bytes(uri, buf.getvalue(), region=region)
 
 
-def _process_scene(op: str, params: dict, scene: Scene) -> dict[str, np.ndarray]:
-    """Apply the manifest's op to one scene; return {output_name: array}."""
+def _save_raster(output_uri: str, index: int, scene_id: str, name: str,
+                 raster: Raster, fmt: str, *, region: str | None) -> str:
+    """Write one output raster in the requested format; return the URI written."""
+    if fmt == "npy":
+        uri = state.output_uri_for(output_uri, index, f"{scene_id}__{name}.npy")
+        _save_npy(uri, raster.data, region=region)
+        return uri
+    # gtiff / cog
+    ext = "tif"
+    uri = state.output_uri_for(output_uri, index, f"{scene_id}__{name}.{ext}")
+    data = write_geotiff(uri, raster, cog=(fmt != "gtiff-plain"))
+    state.put_bytes(uri, data, region=region)
+    return uri
+
+
+def _process_scene(op: str, params: dict, scene: Scene) -> dict[str, Raster]:
+    """Apply the manifest's op to one scene; return {output_name: Raster}."""
     if op == "band-math":
-        out: dict[str, np.ndarray] = {}
+        out: dict[str, Raster] = {}
         for spec in params["indices"]:
             idx = parse_spec(spec)
             out[idx.name] = ops.band_math(scene.assets, idx)
         return out
     if op == "cloud-mask":
-        return {"mask": ops.cloud_mask(scene.assets).astype(np.uint8)}
+        return {"mask": ops.cloud_mask(scene.assets)}
     raise ValueError(f"unknown op {op!r}")
 
 
@@ -51,6 +72,7 @@ def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force
     if not force and state.shard_done(manifest.output_uri, index, region=region):
         return {"shard": index, "status": "skipped", "reason": "checkpoint exists"}
 
+    fmt = manifest.params.get("format", "cog")
     scenes = manifest.scenes_for(index)
     written: list[str] = []
     failed: list[dict] = []
@@ -61,15 +83,15 @@ def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force
         except Exception as e:  # a bad scene must not sink the shard; record and continue
             failed.append({"scene": scene.id, "error": str(e)})
             continue
-        for name, arr in results.items():
-            uri = state.output_uri_for(manifest.output_uri, index, f"{scene.id}__{name}.npy")
-            _save_npy(uri, arr, region=region)
+        for name, raster in results.items():
+            uri = _save_raster(manifest.output_uri, index, scene.id, name, raster, fmt, region=region)
             written.append(uri)
 
     # Checkpoint LAST — only now is the shard's output durable (delete-after-durable).
     summary = {
         "shard": index,
         "status": "done",
+        "format": fmt,
         "scenes": len(scenes),
         "outputs": len(written),
         "failed": failed,
