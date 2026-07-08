@@ -6,6 +6,12 @@ versions follow semver.
 ## [Unreleased]
 
 ### Added
+- **Release automation** (closes #2): `.github/workflows/release.yml` triggers on a `v*` tag —
+  verifies the tag matches `pyproject.toml`'s version, builds sdist+wheel with `uv build`,
+  smoke-tests the wheel in a clean env (`loam --version`), publishes to PyPI via **Trusted
+  Publishing (OIDC, no stored token)**, and cuts a GitHub Release with generated notes. The PyPI
+  distribution name is **`loam-geo`** (the bare `loam` is taken by an unrelated project); the
+  import name stays `loam`. Added release classifiers + project URLs to `pyproject.toml`.
 - **Live STAC integration tests** (closes #3): opt-in `tests/test_integration.py` (marked
   `integration`, skipped unless `LOAM_LIVE_TESTS=1`) exercises the real network path the offline
   suite can't — Earth Search search + pagination, asset-key → canonical-band mapping, and a full

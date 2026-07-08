@@ -3,7 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "loam"
+# Distribution name is "loam-geo" — the bare "loam" is taken on PyPI by an unrelated
+# config-manager project. The IMPORT name is unchanged: `pip install loam-geo` then `import loam`.
+name = "loam-geo"
 version = "0.1.0"
 description = "Execution-agnostic geospatial operations (cloud-mask, band-math over Sentinel-2) for the spore.host substrate — an open replacement for SageMaker Geospatial's Earth Observation Jobs"
 readme = "README.md"
@@ -11,6 +13,18 @@ requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "scttfrdmn" }]
 keywords = ["geospatial", "sentinel-2", "stac", "band-math", "ndvi", "aws", "ec2", "spawn", "earth-observation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
 dependencies = [
     "numpy>=1.24",
     "rasterio>=1.3",
@@ -19,7 +33,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.5", "mypy>=1.8"]
+dev = ["pytest>=7", "ruff>=0.5", "mypy>=1.8", "build>=1.0"]
 
 [project.scripts]
 loam = "loam.cli:main"
@@ -27,6 +41,8 @@ loam = "loam.cli:main"
 [project.urls]
 Homepage = "https://github.com/scttfrdmn/loam"
 Issues = "https://github.com/scttfrdmn/loam/issues"
+Changelog = "https://github.com/scttfrdmn/loam/blob/main/CHANGELOG.md"
+Source = "https://github.com/scttfrdmn/loam"
 
 [tool.setuptools.packages.find]
 include = ["loam*"]
