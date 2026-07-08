@@ -59,6 +59,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         max_cloud=args.max_cloud,
         shard_size=args.shard_size,
         limit=args.limit,
+        fmt=args.format,
         stac_url=args.stac_url,
     )
     write_manifest(manifest, args.manifest, region=args.region)
@@ -136,6 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--max-cloud", type=float, default=None)
     pp.add_argument("--shard-size", type=int, default=50)
     pp.add_argument("--limit", type=int, default=None)
+    pp.add_argument("--format", choices=["cog", "gtiff", "npy"], default="cog",
+                    help="output raster format (default cog: georeferenced Cloud-Optimized GeoTIFF)")
     pp.add_argument("--output", required=True, help="s3://bucket/prefix/ for shard outputs")
     pp.add_argument("--manifest", required=True, help="s3://... where to write the manifest")
     pp.add_argument("--stac-url", default="https://earth-search.aws.element84.com/v1")

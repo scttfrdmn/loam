@@ -5,9 +5,11 @@ Bands are read directly from the scene's COG hrefs via ``/vsicurl`` (rasterio), 
 overview level nearest the requested resolution — so we fetch tens of times fewer bytes than
 the full 10m tile, exactly as the fieldwork deforestation tutorial does.
 
-Each function processes ONE scene and returns arrays. The shard runner (``run.py``) loops
-these over a shard's scenes and writes results to S3. Nothing here knows about shards, S3, or
-runners — pure content, unit-testable with local rasters.
+Each function processes ONE scene and returns a georeferenced ``Raster`` (array + transform +
+CRS + nodata) — so results open correctly in GDAL/QGIS and downstream tools can turn pixels
+into lat/lon. The shard runner (``run.py``) loops these over a shard's scenes and writes each
+Raster as a (COG) GeoTIFF. Nothing here knows about shards, S3, or runners — pure content,
+unit-testable with local rasters.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import numpy as np
 
 from .indices import IndexDef, bands_in
+from .raster import Raster, read_band as _read_band_raster
 
 # Sentinel-2 L2A Scene Classification (SCL) values that are cloud / cloud-shadow / cirrus.
 # 3=cloud shadow, 8=cloud medium prob, 9=cloud high prob, 10=thin cirrus, 11=snow(optional).
@@ -22,24 +25,12 @@ _SCL_CLOUD = {3, 8, 9, 10}
 
 
 def read_band(href: str, *, target_res: float | None = None) -> np.ndarray:
-    """Read a single COG band as float, optionally at a coarser overview level.
+    """Read a single COG band as a float32 array (no georeferencing).
 
-    target_res in metres. If given, we request an out_shape scaled from the native
-    resolution so GDAL serves the matching overview (10-50x fewer bytes) instead of full res.
+    Thin wrapper over ``raster.read_band`` kept for the compute paths (and tests) that only
+    need pixels. When georeferencing must be preserved, ops use ``raster.read_band`` directly.
     """
-    import rasterio
-    from rasterio.enums import Resampling
-
-    with rasterio.open(href) as src:
-        if target_res is None:
-            return src.read(1).astype(np.float32)
-        native = src.res[0]
-        scale = max(1.0, target_res / native)
-        out_h = max(1, int(src.height / scale))
-        out_w = max(1, int(src.width / scale))
-        return src.read(
-            1, out_shape=(out_h, out_w), resampling=Resampling.average
-        ).astype(np.float32)
+    return _read_band_raster(href, target_res=target_res).data
 
 
 def _align(arrays: list[np.ndarray]) -> list[np.ndarray]:
@@ -55,42 +46,48 @@ def band_math(
     *,
     target_res: float | None = 100.0,
     scl_mask: bool = True,
-) -> np.ndarray:
-    """Evaluate one index's equation for a scene; returns a float32 array (NaN where masked).
+) -> Raster:
+    """Evaluate one index's equation for a scene; return a georeferenced float32 Raster.
 
-    Only the bands the equation references are read. If ``scl_mask`` and an ``scl`` asset is
-    present, cloudy pixels are set to NaN first (band-math over clouds is meaningless).
+    NaN where masked. Only the bands the equation references are read. If ``scl_mask`` and an
+    ``scl`` asset is present, cloudy pixels are set to NaN first (band-math over clouds is
+    meaningless). The output carries the transform/CRS of the referenced bands (clipped to the
+    common grid), so downstream georeferencing is exact.
     """
     needed = bands_in(index.equation)
     missing = needed - assets.keys()
     if missing:
         raise KeyError(f"scene missing bands {sorted(missing)} for {index.name}")
 
-    raw = {b: read_band(assets[b], target_res=target_res) for b in needed}
-    aligned = _align(list(raw.values()))
-    env = dict(zip(raw.keys(), aligned))
+    rasters = {b: _read_band_raster(assets[b], target_res=target_res) for b in needed}
+    # Reference georeferencing = whichever band has the largest grid (finest); we clip all to
+    # the common (min) shape, and that band's transform is valid for the clipped top-left.
+    ref = max(rasters.values(), key=lambda r: r.height * r.width)
+    aligned = _align([r.data for r in rasters.values()])
+    env = dict(zip(rasters.keys(), aligned))
 
+    cloud = None
     if scl_mask and "scl" in assets:
-        scl = read_band(assets["scl"], target_res=target_res)
+        scl = _read_band_raster(assets["scl"], target_res=target_res).data
         scl = _align([scl, aligned[0]])[0]
         cloud = np.isin(np.rint(scl).astype(int), list(_SCL_CLOUD))
-    else:
-        cloud = None
 
-    # Evaluate the equation in a numpy namespace. Equations are our own catalog constants or
-    # a user-supplied NAME=equation; there is no untrusted input path here, but we still
-    # restrict builtins so a typo fails loudly rather than reaching into the interpreter.
+    # Evaluate the equation in a numpy namespace. Equations are our own catalog constants or a
+    # user-supplied NAME=equation; the empty __builtins__ blocks the obvious attacks (a fuller
+    # allowlist evaluator is tracked in issue #4).
     with np.errstate(invalid="ignore", divide="ignore"):
         result = eval(index.equation, {"__builtins__": {}}, env)  # noqa: S307 - constrained namespace
     result = np.asarray(result, dtype=np.float32)
     if cloud is not None:
         result = np.where(cloud, np.nan, result)
-    return result
+
+    return Raster(data=result, transform=ref.transform, crs=ref.crs, nodata=float("nan"))
 
 
-def cloud_mask(assets: dict[str, str], *, target_res: float | None = 100.0) -> np.ndarray:
-    """Return a boolean cloud mask for a scene from its SCL band (True = cloud/shadow/cirrus)."""
+def cloud_mask(assets: dict[str, str], *, target_res: float | None = 100.0) -> Raster:
+    """Return a georeferenced uint8 cloud mask (1 = cloud/shadow/cirrus) from the SCL band."""
     if "scl" not in assets:
         raise KeyError("cloud-mask requires an 'scl' asset (Sentinel-2 L2A Scene Classification)")
-    scl = read_band(assets["scl"], target_res=target_res)
-    return np.isin(np.rint(scl).astype(int), list(_SCL_CLOUD))
+    scl = _read_band_raster(assets["scl"], target_res=target_res)
+    mask = np.isin(np.rint(scl.data).astype(int), list(_SCL_CLOUD)).astype(np.uint8)
+    return Raster(data=mask, transform=scl.transform, crs=scl.crs, nodata=None)

@@ -63,24 +63,39 @@ def test_manifest_roundtrip():
     assert m2.scenes_for(0)[0].id == "s0"
 
 
+# A synthetic georeferenced band, used to fake raster.read_band in ops. UTM-ish transform.
+def _fake_raster(value, h=4, w=4):
+    from loam.raster import Raster
+
+    return Raster(
+        data=np.full((h, w), float(value), np.float32),
+        transform=(10.0, 0.0, 500000.0, 0.0, -10.0, 2200000.0),
+        crs="EPSG:32629",
+        nodata=None,
+    )
+
+
 def test_band_math_math(monkeypatch):
     # Feed known band arrays; NDVI of nir=3, red=1 -> (3-1)/(3+1) = 0.5.
     from loam import ops
 
-    fake = {"nir": np.full((4, 4), 3.0, np.float32), "red": np.full((4, 4), 1.0, np.float32)}
-    monkeypatch.setattr(ops, "read_band", lambda href, target_res=None: fake[href])
+    fake = {"nir": _fake_raster(3.0), "red": _fake_raster(1.0)}
+    monkeypatch.setattr(ops, "_read_band_raster", lambda href, target_res=None: fake[href])
     out = ops.band_math({"nir": "nir", "red": "red"}, indices.resolve("NDVI"), scl_mask=False)
-    assert np.allclose(out, 0.5)
+    assert np.allclose(out.data, 0.5)
+    # georeferencing carried through
+    assert out.crs == "EPSG:32629"
+    assert out.transform[0] == 10.0 and out.transform[2] == 500000.0
 
 
-def test_run_shard_idempotent(tmp_path, monkeypatch):
+def test_run_shard_idempotent_and_geotiff(tmp_path, monkeypatch):
     from loam import ops, run, state
 
     # local "object store": output_uri is a filesystem path
     out = str(tmp_path / "out")
     scene = Scene(id="scene0", datetime="2023-01-01", assets={"nir": "nir", "red": "red"})
     m = Manifest(
-        version=MANIFEST_VERSION, op="band-math", params={"indices": ["NDVI"]},
+        version=MANIFEST_VERSION, op="band-math", params={"indices": ["NDVI"], "format": "cog"},
         collection="sentinel-2-l2a", aoi=[0, 0, 1, 1], output_uri=out, scenes=[scene],
     )
     m.shards = shard_scenes(m.scenes, 50)
@@ -88,18 +103,49 @@ def test_run_shard_idempotent(tmp_path, monkeypatch):
     state.put_text(manifest_uri, m.to_json())
 
     monkeypatch.setattr(
-        ops, "read_band",
-        lambda href, target_res=None: np.full((2, 2), 3.0 if href == "nir" else 1.0, np.float32),
+        ops, "_read_band_raster",
+        lambda href, target_res=None: _fake_raster(3.0 if href == "nir" else 1.0, 512, 512),
     )
 
     s1 = run.run_shard(manifest_uri, 0)
     assert s1["status"] == "done"
     assert s1["outputs"] == 1
+    assert s1["format"] == "cog"
     assert state.shard_done(out, 0)
+
+    # the written output is a real georeferenced GeoTIFF that round-trips through rasterio
+    import rasterio
+
+    tif = state.output_uri_for(out, 0, "scene0__NDVI.tif")
+    with rasterio.open(tif) as src:
+        assert src.crs.to_string() == "EPSG:32629"
+        assert src.transform.a == 10.0
+        assert abs(float(src.read(1).mean()) - 0.5) < 1e-4
 
     # second run is a no-op (checkpoint exists) — the spot-safe resume property
     s2 = run.run_shard(manifest_uri, 0)
     assert s2["status"] == "skipped"
+
+
+def test_run_shard_npy_format(tmp_path, monkeypatch):
+    from loam import ops, run, state
+
+    out = str(tmp_path / "out")
+    scene = Scene(id="s0", datetime="2023-01-01", assets={"nir": "nir", "red": "red"})
+    m = Manifest(
+        version=MANIFEST_VERSION, op="band-math", params={"indices": ["NDVI"], "format": "npy"},
+        collection="sentinel-2-l2a", aoi=[0, 0, 1, 1], output_uri=out, scenes=[scene],
+    )
+    m.shards = shard_scenes(m.scenes, 50)
+    manifest_uri = str(tmp_path / "m.json")
+    state.put_text(manifest_uri, m.to_json())
+    monkeypatch.setattr(
+        ops, "_read_band_raster",
+        lambda href, target_res=None: _fake_raster(3.0 if href == "nir" else 1.0),
+    )
+    s = run.run_shard(manifest_uri, 0)
+    assert s["format"] == "npy"
+    assert state.exists(state.output_uri_for(out, 0, "s0__NDVI.npy"))
 
 
 def test_status_from_store(tmp_path):
