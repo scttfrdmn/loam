@@ -5,6 +5,15 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Added
+- **Live STAC integration tests** (closes #3): opt-in `tests/test_integration.py` (marked
+  `integration`, skipped unless `LOAM_LIVE_TESTS=1`) exercises the real network path the offline
+  suite can't — Earth Search search + pagination, asset-key → canonical-band mapping, and a full
+  `run_shard` reading real Sentinel-2 COGs via `/vsicurl` (no AWS creds). Default `pytest` stays
+  hermetic. Resolved the asset-alias question: Earth Search v1 exposes lowercase canonical keys
+  (`red`, `nir`, `scl`, …), so `_S2_ASSET_ALIASES` is a no-op there and is retained only for
+  other catalogs (e.g. Planetary Computer's `B04`); comment updated in `catalog.py`.
+
 ### Security
 - **Safe band-math evaluation** (closes #4): `band_math` no longer uses Python `eval`. A custom
   `NAME=equation` index spec — or an equation string in a manifest of unknown origin — is now
