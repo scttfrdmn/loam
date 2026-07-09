@@ -5,7 +5,13 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Added
+- **`docs/PARITY.md`** — a SageMaker Geospatial parity matrix (EOJ / VEJ / executor + viewer),
+  what loam covers vs. deliberately does differently, and the honest remaining gaps. Linked from
+  the README and DESIGN. Filed the clearest unmet op gap: zonal statistics (#34).
+
 ### Changed
+- README Status refreshed to v0.2.0 (was stale at v0.1.0).
 - `loam.__version__` is now read from installed package metadata (`importlib.metadata`), so
   `pyproject.toml` is the single source of truth and the CLI can't drift from the published
   version. The release workflow now asserts the built wheel's `loam --version` equals the tag.

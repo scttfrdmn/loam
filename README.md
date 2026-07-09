@@ -129,12 +129,17 @@ run.run_shard("s3://my-bucket/h2/manifest.json", index=0)
 
 ## Status
 
-**v0.1.0 — Tier-1 MVP.** STAC search (Earth Search), cloud-mask, band-math, `/vsicurl` COG
-reads, S3 manifest + shard/checkpoint protocol, `spawn`/local dispatch. Enough to replace a
-SageMaker Geospatial EOJ chain (the founding use case: natural-hydrogen "fairy circle"
-prospecting on Sentinel-2). Roadmap: temporal composites & geomosaics (`stackstac`+`xarray`),
-resampling, vector enrichment, an arm64 container for cheap Graviton prep, a `titiler`/`leafmap`
-viewer.
+**v0.2.0 — Parity ops.** STAC search (Earth Search), cloud-mask, band-math (14 indices + custom
+equations), resample/reproject, temporal composites/geomosaics, and reverse-geocode — over
+`/vsicurl` COG reads, with an S3 manifest + shard/checkpoint protocol, per-shard compute-shape
+estimates, an `loam status --detail` job ledger, and `spawn`/local dispatch. loam now covers the
+operations half of SageMaker Geospatial's EOJ **and** VEJ.
+
+**How complete a replacement is it?** See **[docs/PARITY.md](docs/PARITY.md)** — the full
+SageMaker Geospatial parity matrix and what loam deliberately does differently. Short version:
+the operations people actually ran are covered; the honest remaining gaps are zonal statistics and
+map-match. Roadmap: runner integrations (nf-spawn, lagotto), those gap ops, an arm64/Graviton
+container, and a `titiler`/`leafmap` viewer.
 
 ## Contributing
 

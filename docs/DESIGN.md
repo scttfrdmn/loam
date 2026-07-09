@@ -109,3 +109,5 @@ These are enforced mechanically by `tests/test_contract.py` — but understand *
   indices, VEJ-style reverse-geocode; per-shard **compute-shape** estimation for truffle (#17).
 - **Tier 3 — product:** `titiler`/`leafmap` viewer, declarative multi-op pipeline spec, arm64
   packaging for Graviton prep.
+
+See [PARITY.md](PARITY.md) for how loam maps against SageMaker Geospatial operation-by-operation.
