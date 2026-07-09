@@ -48,6 +48,12 @@ def _cmd_collections(args: argparse.Namespace) -> int:
 def _cmd_plan(args: argparse.Namespace) -> int:
     from .plan import build_manifest, write_manifest
 
+    # --format defaults to cog (raster); a row op needs a row format. Default it to csv unless the
+    # user picked a row format explicitly.
+    fmt = args.format
+    if args.op == "reverse-geocode" and fmt not in ("csv", "geojson"):
+        fmt = "csv"
+
     manifest = build_manifest(
         op=args.op,
         collection=args.collection,
@@ -64,9 +70,13 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         max_cloud=args.max_cloud,
         shard_size=args.shard_size,
         limit=args.limit,
-        fmt=args.format,
+        fmt=fmt,
         target_res=args.target_res,
         stac_url=args.stac_url,
+        input_uri=args.input_uri,
+        rows_per_shard=args.rows_per_shard,
+        lat_field=args.lat_field,
+        lon_field=args.lon_field,
     )
     write_manifest(manifest, args.manifest, region=args.region)
     print(
@@ -158,11 +168,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     pp = sub.add_parser("plan", help="search + shard into a manifest")
     pp.add_argument("--op", required=True,
-                    choices=["band-math", "cloud-mask", "resample", "temporal-composite"])
+                    choices=["band-math", "cloud-mask", "resample", "temporal-composite",
+                             "reverse-geocode"])
     pp.add_argument("--collection", default="sentinel-2")
-    pp.add_argument("--aoi", type=_aoi, required=True, help="W,S,E,N (WGS84)")
-    pp.add_argument("--start", required=True, help="YYYY-MM-DD or RFC3339")
-    pp.add_argument("--end", required=True)
+    # AOI/date range are required for raster ops; row ops (reverse-geocode) use --input instead.
+    # build_manifest validates per-op.
+    pp.add_argument("--aoi", type=_aoi, default=None, help="W,S,E,N (WGS84; raster ops)")
+    pp.add_argument("--start", default=None, help="YYYY-MM-DD or RFC3339 (raster ops)")
+    pp.add_argument("--end", default=None, help="(raster ops)")
     pp.add_argument("--indices", help="comma list, e.g. NDVI,BSI (band-math)")
     pp.add_argument("--bands", help="comma list of bands to reproject, e.g. red,nir (resample)")
     pp.add_argument("--dst-crs", dest="dst_crs", help="target CRS, e.g. EPSG:4326 (resample)")
@@ -172,11 +185,20 @@ def build_parser() -> argparse.ArgumentParser:
                     help="resampling method: nearest|bilinear|cubic|average|… (resample)")
     pp.add_argument("--reducer", choices=["median", "mean", "max"], default="median",
                     help="time-reduction for temporal-composite (default median)")
+    # reverse-geocode (row op): read points from a file, no STAC search
+    pp.add_argument("--input", dest="input_uri", default=None,
+                    help="CSV or GeoJSON of points to reverse-geocode (reverse-geocode)")
+    pp.add_argument("--rows-per-shard", dest="rows_per_shard", type=int, default=5000,
+                    help="rows per shard for a row op (reverse-geocode; default 5000)")
+    pp.add_argument("--lat-field", dest="lat_field", default=None,
+                    help="CSV latitude column (reverse-geocode; default auto-detect)")
+    pp.add_argument("--lon-field", dest="lon_field", default=None,
+                    help="CSV longitude column (reverse-geocode; default auto-detect)")
     pp.add_argument("--max-cloud", type=float, default=None)
     pp.add_argument("--shard-size", type=int, default=50)
     pp.add_argument("--limit", type=int, default=None)
-    pp.add_argument("--format", choices=["cog", "gtiff", "npy"], default="cog",
-                    help="output raster format (default cog: georeferenced Cloud-Optimized GeoTIFF)")
+    pp.add_argument("--format", choices=["cog", "gtiff", "npy", "csv", "geojson"], default="cog",
+                    help="output format (raster: cog|gtiff|npy; reverse-geocode: csv|geojson)")
     res = pp.add_mutually_exclusive_group()
     res.add_argument("--target-res", type=float, default=100.0, dest="target_res",
                      help="resolution in metres to read (default 100; overview-based, fewer bytes)")

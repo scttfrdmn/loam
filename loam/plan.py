@@ -18,11 +18,11 @@ from .manifest import Manifest, MANIFEST_VERSION, shard_by_tile, shard_scenes
 def build_manifest(
     *,
     op: str,
-    collection: str,
-    aoi: list[float],
-    start: str,
-    end: str,
     output_uri: str,
+    collection: str = "sentinel-2",
+    aoi: list[float] | None = None,
+    start: str | None = None,
+    end: str | None = None,
     indices: list[str] | None = None,
     bands: list[str] | None = None,
     dst_crs: str | None = None,
@@ -35,6 +35,11 @@ def build_manifest(
     fmt: str = "cog",
     target_res: float | None = 100.0,
     stac_url: str = catalog.DEFAULT_STAC_URL,
+    # vector (row) ops — reverse-geocode reads points from a file instead of searching STAC
+    input_uri: str | None = None,
+    rows_per_shard: int = 5000,
+    lat_field: str | None = None,
+    lon_field: str | None = None,
 ) -> Manifest:
     """Search, shard, and assemble a Manifest (does not write it — caller persists).
 
@@ -42,6 +47,17 @@ def build_manifest(
     continental-scale change detection; pass ``None`` for native full resolution when the
     features of interest are small (e.g. Sentinel-2 10m for fairy-circle detection).
     """
+    # Row (vector) ops read points from a file, not STAC — they bypass search entirely.
+    if op == "reverse-geocode":
+        return _build_vector_manifest(
+            op=op, output_uri=output_uri, input_uri=input_uri, fmt=fmt,
+            rows_per_shard=rows_per_shard, lat_field=lat_field, lon_field=lon_field,
+        )
+
+    # Raster ops require a search footprint + date range.
+    if aoi is None or start is None or end is None:
+        raise ValueError(f"op {op!r} requires --aoi, --start, and --end")
+
     params: dict = {"format": fmt, "target_res": target_res}
     wanted: set[str] = {"scl"}  # always fetch SCL so ops can cloud-mask
 
@@ -124,6 +140,49 @@ def build_manifest(
         output_uri=output_uri,
         scenes=scenes,
         shards=shards,
+    )
+
+
+def _build_vector_manifest(
+    *, op: str, output_uri: str, input_uri: str | None, fmt: str,
+    rows_per_shard: int, lat_field: str | None, lon_field: str | None,
+    region: str | None = None,
+) -> Manifest:
+    """Build a manifest for a row op: read a points file, chunk rows into shards.
+
+    No STAC search. Each shard is a chunk of input rows, written under ``output_uri/_input/`` and
+    referenced by a Scene's ``assets["rows"]`` — so ``run-shard`` reads just its chunk. Mirrors the
+    raster manifest contract (work-as-data, deterministic sharding) for a non-raster input.
+    """
+    from . import vector
+    from .manifest import Scene, shard_scenes
+
+    if not input_uri:
+        raise ValueError(f"{op} requires --input (a CSV or GeoJSON of points)")
+    if fmt not in ("csv", "geojson"):
+        raise ValueError(f"{op} requires --format csv or geojson (got {fmt!r})")
+    if rows_per_shard < 1:
+        raise ValueError("--rows-per-shard must be >= 1")
+
+    text = state.get_text(input_uri, region=region)
+    rows, _ = vector.read_points(text, fmt, lat_field=lat_field, lon_field=lon_field)
+
+    scenes: list[Scene] = []
+    for i in range(0, len(rows), rows_per_shard):
+        chunk = rows[i : i + rows_per_shard]
+        cid = f"chunk-{i // rows_per_shard:05d}"
+        chunk_uri = state.join(output_uri, "_input", f"{cid}.{fmt}")
+        # write the chunk in the SAME format, so run-shard reads it back with read_points
+        state.put_text(chunk_uri, vector.write_chunk(chunk, fmt), region=region)
+        scenes.append(Scene(id=cid, datetime="", assets={"rows": chunk_uri}))
+
+    params = {
+        "format": fmt, "lat_field": lat_field, "lon_field": lon_field, "backend": "offline",
+    }
+    shards = shard_scenes(scenes, 1)  # one row-chunk per shard (the chunk already sized the work)
+    return Manifest(
+        version=MANIFEST_VERSION, op=op, params=params, collection="vector", aoi=[],
+        output_uri=output_uri, scenes=scenes, shards=shards,
     )
 
 

@@ -434,6 +434,106 @@ def test_shape_temporal_composite_peak_scales_with_scenes():
     assert s["peak_rss_bytes"] == side * side * (30 + 1) * 4
 
 
+# ── vector enrichment / reverse-geocode (#12) ────────────────────────────────
+
+def test_vector_read_write_csv_roundtrip():
+    from loam import vector
+    text = "name,lat,lon\nA,18.9,-3.5\nB,40.7,-74.0\n"
+    rows, coords = vector.read_points(text, "csv")
+    assert coords == [(18.9, -3.5), (40.7, -74.0)]
+    out = vector.write_enriched(rows, [{"geo_name": "X", "geo_cc": "ML"},
+                                       {"geo_name": "Y", "geo_cc": "US"}], "csv")
+    assert "geo_name" in out.splitlines()[0] and "X" in out and "US" in out
+
+
+def test_vector_read_geojson_and_custom_csv_fields():
+    from loam import vector
+    import json
+    gj = json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"id": 1},
+         "geometry": {"type": "Point", "coordinates": [-3.5, 18.9]}},  # GeoJSON is [lon, lat]
+    ]})
+    rows, coords = vector.read_points(gj, "geojson")
+    assert coords == [(18.9, -3.5)]
+    out = json.loads(vector.write_enriched(rows, [{"geo_cc": "ML"}], "geojson"))
+    assert out["features"][0]["properties"]["geo_cc"] == "ML"
+    # custom lat/lon column names
+    csv_text = "y,x,v\n40.7,-74.0,q\n"
+    _, c2 = vector.read_points(csv_text, "csv", lat_field="y", lon_field="x")
+    assert c2 == [(40.7, -74.0)]
+
+
+def test_vector_errors():
+    from loam import vector
+    with pytest.raises(ValueError, match="no lat/lon column"):
+        vector.read_points("a,b\n1,2\n", "csv")
+    with pytest.raises(ValueError, match="unsupported vector format"):
+        vector.read_points("x", "parquet")
+    with pytest.raises(ValueError, match="unknown backend"):
+        vector.reverse_geocode([(0.0, 0.0)], backend="nominatim")
+
+
+def test_reverse_geocode_offline_backend():
+    pytest.importorskip("reverse_geocoder")
+    from loam import vector
+    enr = vector.reverse_geocode([(40.7, -74.0)])  # NYC
+    assert enr[0]["geo_cc"] == "US"
+    assert enr[0]["geo_name"]  # a place name resolved
+
+
+def test_build_manifest_reverse_geocode_no_stac(tmp_path, monkeypatch):
+    from loam import catalog, plan
+
+    # If build_manifest touches STAC for a row op, this raises — proving the search bypass.
+    def boom(**kw):
+        raise AssertionError("catalog.search must not be called for reverse-geocode")
+    monkeypatch.setattr(catalog, "search", boom)
+
+    csv_path = tmp_path / "pts.csv"
+    csv_path.write_text("name,lat,lon\nA,18.9,-3.5\nB,40.7,-74.0\nC,48.85,2.35\n")
+    out = str(tmp_path / "out")
+    m = plan.build_manifest(
+        op="reverse-geocode", output_uri=out, input_uri=str(csv_path),
+        rows_per_shard=2, fmt="csv",
+    )
+    assert m.collection == "vector" and m.aoi == []
+    assert len(m.shards) == 2                       # 3 rows / 2 → 2 chunks
+    assert m.scenes[0].assets["rows"].endswith(".csv")
+
+
+def test_build_manifest_reverse_geocode_requires_input():
+    from loam import plan
+    with pytest.raises(ValueError, match="requires --input"):
+        plan.build_manifest(op="reverse-geocode", output_uri="s3://b/o/", fmt="csv")
+
+
+def test_run_shard_reverse_geocode_end_to_end(tmp_path):
+    pytest.importorskip("reverse_geocoder")
+    from loam import plan, run, state
+
+    csv_path = tmp_path / "pts.csv"
+    csv_path.write_text("name,lat,lon\nAraouane,18.9,-3.5\nNYC,40.7,-74.0\n")
+    out = str(tmp_path / "out")
+    manifest_uri = str(tmp_path / "m.json")
+    m = plan.build_manifest(op="reverse-geocode", output_uri=out, input_uri=str(csv_path),
+                            rows_per_shard=5, fmt="csv")
+    plan.write_manifest(m, manifest_uri)
+
+    s = run.run_shard(manifest_uri, 0)
+    assert s["status"] == "done" and s["outputs"] == 1 and not s["failed"]
+    enriched = state.get_text(state.output_uri_for(out, 0, "chunk-00000__enriched.csv"))
+    assert "geo_cc" in enriched and "US" in enriched and "ML" in enriched
+    # idempotent re-run
+    assert run.run_shard(manifest_uri, 0)["status"] == "skipped"
+
+
+def test_shape_reverse_geocode_is_trivial():
+    from loam import shape
+    s = shape.shape_for("reverse-geocode", {"format": "csv"}, 4, "vector")
+    assert s["scenes"] == 4 and s["outputs"] == 1
+    assert s["approx_bytes_read"] == 0 and s["peak_rss_bytes"] == 0
+
+
 def test_safe_eval_all_catalog_equations():
     # Every catalog equation must compute identically under the AST evaluator. Feed synthetic
     # per-band scalars and compare to the plain Python arithmetic (the acceptance guard).

@@ -25,7 +25,7 @@ loam standardizes on [uv](https://docs.astral.sh/uv/). The committed `uv.lock` i
 installs, so a local checkout runs the exact resolved dependency set:
 
 ```bash
-uv sync --extra dev          # create .venv and install loam + dev tools from the lock
+uv sync --extra dev --extra vector   # .venv with loam + dev tools + the reverse-geocode backend
 ```
 
 (No uv? `pipx install uv` or see the uv docs. A plain `pip install -e '.[dev]'` also works but
