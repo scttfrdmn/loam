@@ -6,6 +6,13 @@ versions follow semver.
 ## [Unreleased]
 
 ### Added
+- **Vector enrichment: reverse-geocode** (closes #12, v1): `loam plan --op reverse-geocode --input
+  points.csv` (CSV or GeoJSON of lat/lon) chunks rows into shards; `run-shard` appends place
+  columns (`geo_name/geo_admin1/geo_admin2/geo_cc`) via an **offline** backend (`reverse_geocoder`,
+  optional `loam-geo[vector]` extra) — deterministic, network-free, spot-safe. The first non-raster
+  op: it bypasses STAC search and rides the same manifest/shard/state machinery (`loam/vector.py`;
+  backend pluggable for a future online option). Map-match and a Nominatim (online) backend are
+  tracked as follow-ups.
 - **Temporal composite / geomosaic op** (closes #6): `loam plan --op temporal-composite --reducer
   median|mean|max --indices NDVI` (or `--bands`) reduces a stack of scenes over time into one
   cloud-free-ish mosaic per MGRS tile. New spatial sharder `manifest.shard_by_tile` groups a tile's

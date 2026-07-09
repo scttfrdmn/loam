@@ -113,6 +113,24 @@ def _composite_shard(
     return name, raster, failed
 
 
+def _enrich_rows(
+    output_uri: str, index: int, scene: Scene, params: dict, *, region: str | None
+) -> tuple[str, int]:
+    """Reverse-geocode one chunk of points; write the enriched rows. Returns (uri, bytes)."""
+    from . import vector
+
+    fmt = params.get("format", "csv")
+    text = state.get_text(scene.assets["rows"], region=region)
+    rows, coords = vector.read_points(
+        text, fmt, lat_field=params.get("lat_field"), lon_field=params.get("lon_field")
+    )
+    enrich = vector.reverse_geocode(coords, backend=params.get("backend", "offline"))
+    out_text = vector.write_enriched(rows, enrich, fmt)
+    uri = state.output_uri_for(output_uri, index, f"{scene.id}__enriched.{fmt}")
+    state.put_text(uri, out_text, region=region)
+    return uri, len(out_text.encode("utf-8"))
+
+
 def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force: bool = False) -> dict:
     """Run a single shard. Returns a small summary dict (also useful for tests)."""
     manifest = Manifest.from_json(state.get_text(manifest_uri, region=region))
@@ -127,7 +145,19 @@ def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force
     bytes_written = 0
     started = time.monotonic()
 
-    if manifest.op == "temporal-composite":
+    if manifest.op == "reverse-geocode":
+        # Row op: enrich each chunk's points and write one enriched file per chunk.
+        for scene in scenes:
+            try:
+                uri, nbytes = _enrich_rows(
+                    manifest.output_uri, index, scene, manifest.params, region=region
+                )
+            except Exception as e:  # a bad chunk must not sink the shard; record and continue
+                failed.append({"scene": scene.id, "error": str(e)})
+                continue
+            written.append(uri)
+            bytes_written += nbytes
+    elif manifest.op == "temporal-composite":
         # Shard-level op: reduce the whole tile's time series into ONE output. A bad date is
         # dropped (recorded in failed); the shard fails only if no date survives.
         name, raster, failed = _composite_shard(manifest.params, scenes)

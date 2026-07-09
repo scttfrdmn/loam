@@ -30,7 +30,7 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Install
-        run: uv sync --locked --extra dev
+        run: uv sync --locked --extra dev --extra vector
 
       - name: Lint (ruff)
         run: uv run --no-sync ruff check loam/

@@ -93,6 +93,10 @@ def _bands_and_outputs(op: str, params: dict) -> tuple[list[str], int, list[int]
     return [], 0, [0]
 
 
+def _is_raster_op(op: str) -> bool:
+    return op in ("band-math", "cloud-mask", "resample", "temporal-composite")
+
+
 def _equation_of(spec: str) -> str:
     """Equation string of an index spec (``NAME=eq`` custom, or a catalog name)."""
     from .indices import parse_spec
@@ -105,6 +109,14 @@ def shape_for(op: str, params: dict, n_scenes: int, collection: str) -> dict:
 
     Returns a dict: scenes, bands_read, outputs, approx_bytes_read, peak_rss_bytes, est_seconds.
     """
+    if not _is_raster_op(op):
+        # Row ops (reverse-geocode) aren't pixel-bound; compute-shape's byte/RAM model doesn't
+        # apply. Report a trivial shape keyed on scene (chunk) count so status/dispatch still work.
+        return {
+            "scenes": n_scenes, "bands_read": 0, "outputs": 1,
+            "approx_bytes_read": 0, "peak_rss_bytes": 0, "est_seconds": 0.0,
+        }
+
     nominal_px, native_res = _tile_for(collection)
     target_res = params.get("target_res")
     bands, n_out, per_out_counts = _bands_and_outputs(op, params)
