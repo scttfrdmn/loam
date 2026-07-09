@@ -38,11 +38,19 @@ jobs:
       - name: Build sdist + wheel
         run: uv build
 
-      # Smoke-test the built wheel in a clean env: it installs and `loam --version` prints the tag.
+      # Smoke-test the built wheel in a clean env: it installs, `loam --version` prints the TAG
+      # (guards against any version drift — __version__ is single-sourced from the package
+      # metadata), and a core command runs.
       - name: Verify wheel installs and CLI runs
         run: |
           set -euo pipefail
-          uv run --isolated --no-project --with dist/*.whl loam --version
+          tag="${GITHUB_REF_NAME#v}"
+          got=$(uv run --isolated --no-project --with dist/*.whl loam --version | awk '{print $NF}')
+          echo "tag=$tag  loam --version=$got"
+          if [ "$got" != "$tag" ]; then
+            echo "::error::built wheel reports version $got, expected $tag"
+            exit 1
+          fi
           uv run --isolated --no-project --with dist/*.whl loam indices >/dev/null
 
       - name: Publish to PyPI (Trusted Publishing / OIDC)
