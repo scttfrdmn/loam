@@ -95,6 +95,48 @@ def shard_scenes(scenes: list[Scene], shard_size: int) -> list[Shard]:
     return shards
 
 
+def _tile_of(scene_id: str, collection: str) -> str | None:
+    """Spatial-cell key for a scene, parsed from its id. None if unparseable.
+
+    Pluggable per collection. Sentinel-2 L2A ids embed the MGRS tile as the second underscore
+    field: ``S2B_30QTH_20230619_0_L2A`` -> ``30QTH``. (Only S2 is supported today; other catalogs
+    use different keys, e.g. Landsat WRS path/row — add a parser here when needed.)
+    """
+    if "sentinel-2" in collection or "sentinel2" in collection:
+        parts = scene_id.split("_")
+        if len(parts) >= 2 and parts[1]:
+            return parts[1]
+    return None
+
+
+def shard_by_tile(scenes: list[Scene], collection: str) -> list[Shard]:
+    """Group scenes into one shard per spatial cell (MGRS tile) — for multi-scene ops.
+
+    A temporal composite reduces all of a tile's dates together, so a shard = one tile's full
+    time series (not a scene-count slice). Tiles are sorted so shard indices are deterministic
+    (a re-run addresses the same tile → idempotent). Fails LOUDLY if any id can't be parsed to a
+    tile: silently pooling unparseable scenes would composite different grids into misregistered
+    garbage.
+    """
+    by_tile: dict[str, list[str]] = {}
+    unparseable: list[str] = []
+    for s in scenes:
+        tile = _tile_of(s.id, collection)
+        if tile is None:
+            unparseable.append(s.id)
+        else:
+            by_tile.setdefault(tile, []).append(s.id)
+    if unparseable:
+        raise ValueError(
+            f"cannot parse a spatial tile from {len(unparseable)} scene id(s) for collection "
+            f"{collection!r}: {unparseable[:5]}{'...' if len(unparseable) > 5 else ''}"
+        )
+    return [
+        Shard(index=i, scene_ids=by_tile[tile])
+        for i, tile in enumerate(sorted(by_tile))
+    ]
+
+
 def _known(cls: type, d: dict[str, Any]) -> dict[str, Any]:
     """Keep only keys that are fields of ``cls``.
 

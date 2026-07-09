@@ -14,9 +14,12 @@ unit-testable with local rasters.
 
 from __future__ import annotations
 
+import warnings
+from typing import Callable
+
 import numpy as np
 
-from .indices import IndexDef, bands_in, safe_eval
+from .indices import IndexDef, bands_in, resolve, safe_eval
 from .raster import Raster, read_band as _read_band_raster, reproject_raster
 
 # Sentinel-2 L2A Scene Classification (SCL) values that are cloud / cloud-shadow / cirrus.
@@ -129,3 +132,81 @@ def resample(
         src = _read_band_raster(assets[b], target_res=target_res)
         out[b] = reproject_raster(src, dst_crs=dst_crs, dst_res=dst_res, resampling=resampling)
     return out
+
+
+_REDUCERS: dict[str, Callable[..., np.ndarray]] = {
+    "median": np.nanmedian, "mean": np.nanmean, "max": np.nanmax,
+}
+
+
+def scene_layer(
+    assets: dict[str, str], *, index: str | None, band: str | None,
+    target_res: float | None = 100.0, scl_mask: bool = True,
+) -> Raster:
+    """One scene's cloud-masked contribution to a composite: an ``index`` Raster or a raw ``band``.
+
+    Cloudy pixels are NaN. Callers reading a stack date-by-date use this so a single unreadable
+    date can be dropped without sinking the whole tile.
+    """
+    if index is not None:
+        return band_math(assets, resolve(index), target_res=target_res, scl_mask=scl_mask)
+    assert band is not None
+    if band not in assets:
+        raise KeyError(f"scene missing band {band!r} for composite")
+    r = _read_band_raster(assets[band], target_res=target_res)
+    data = r.data
+    if scl_mask and "scl" in assets:
+        scl = _read_band_raster(assets["scl"], target_res=target_res).data
+        scl = _resample_to(scl, data.shape)
+        data = np.where(np.isin(np.rint(scl).astype(int), list(_SCL_CLOUD)), np.nan, data)
+    return Raster(data=data, transform=r.transform, crs=r.crs, nodata=float("nan"))
+
+
+def reduce_layers(layers: list[Raster], reducer: str = "median") -> Raster:
+    """Reduce a stack of aligned scene layers into one mosaic via a NaN-aware reducer.
+
+    Layers are resampled onto a common (finest) grid — pixel dims can differ by ±1 across dates
+    from overview rounding, so we never trust shapes match — then stacked and reduced pixel-wise
+    with median|mean|max ignoring NaN. A pixel cloudy in every date stays NaN. Assumes all layers
+    share a CRS + grid origin (true within one MGRS tile); it does NOT reproject.
+    """
+    if reducer not in _REDUCERS:
+        raise ValueError(f"unknown reducer {reducer!r}; known: {', '.join(_REDUCERS)}")
+    if not layers:
+        raise ValueError("reduce_layers needs at least one layer")
+    ref = max(layers, key=lambda r: r.height * r.width)
+    ref_shape = (ref.height, ref.width)
+    stack = np.stack([_resample_to(layer.data, ref_shape) for layer in layers], axis=0)
+    # A pixel cloudy in every date is an all-NaN slice → NaN, which is the correct, expected
+    # result; nanmedian/nanmean raise a RuntimeWarning for it, so silence just that.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", r"All-NaN slice encountered", RuntimeWarning)
+        warnings.filterwarnings("ignore", r"Mean of empty slice", RuntimeWarning)
+        result = _REDUCERS[reducer](stack, axis=0).astype(np.float32)
+    return Raster(data=result, transform=ref.transform, crs=ref.crs, nodata=float("nan"))
+
+
+def temporal_composite(
+    scenes_assets: list[dict[str, str]],
+    *,
+    reducer: str = "median",
+    index: str | None = None,
+    band: str | None = None,
+    target_res: float | None = 100.0,
+    scl_mask: bool = True,
+) -> Raster:
+    """Reduce a time-stack of scenes into one mosaic (reads every scene, then reduces).
+
+    Convenience over ``scene_layer`` + ``reduce_layers`` for tests / a whole-stack call. The shard
+    runner reads date-by-date instead so it can drop a bad date. Bounded memory relies on
+    ``target_res`` (the full stack is materialized); full-res is refused in ``plan.build_manifest``.
+    """
+    if (index is None) == (band is None):
+        raise ValueError("temporal_composite needs exactly one of index / band")
+    if not scenes_assets:
+        raise ValueError("temporal_composite needs at least one scene")
+    layers = [
+        scene_layer(a, index=index, band=band, target_res=target_res, scl_mask=scl_mask)
+        for a in scenes_assets
+    ]
+    return reduce_layers(layers, reducer)

@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from loam import indices
-from loam.manifest import Manifest, Scene, shard_scenes, MANIFEST_VERSION
+from loam.manifest import Manifest, Scene, shard_by_tile, shard_scenes, MANIFEST_VERSION
 
 
 def test_index_catalog_ported():
@@ -179,6 +179,41 @@ def test_build_manifest_attaches_shape(monkeypatch):
     assert m.shards[1].shape["approx_bytes_read"] < m.shards[0].shape["approx_bytes_read"]
 
 
+def test_build_manifest_temporal_composite_shards_by_tile(monkeypatch):
+    from loam import catalog, plan
+
+    scenes = [
+        Scene(id="S2B_30QTH_20230101_0_L2A", datetime="2023-01-01", assets={"nir": "n", "red": "r"}),
+        Scene(id="S2A_30QTH_20230201_0_L2A", datetime="2023-02-01", assets={"nir": "n", "red": "r"}),
+        Scene(id="S2B_31QAB_20230101_0_L2A", datetime="2023-01-01", assets={"nir": "n", "red": "r"}),
+    ]
+    monkeypatch.setattr(catalog, "search", lambda **kw: scenes)
+    m = plan.build_manifest(
+        op="temporal-composite", collection="sentinel-2", aoi=[0, 0, 1, 1],
+        start="2023-01-01", end="2023-12-31", indices=["NDVI"], reducer="median",
+        target_res=100.0, output_uri="s3://b/o/",
+    )
+    assert len(m.shards) == 2  # one per tile, NOT per scene-count
+    assert m.params["reducer"] == "median" and m.params["index"] == "NDVI"
+    assert m.shards[0].shape["outputs"] == 1
+
+
+def test_build_manifest_temporal_composite_gates(monkeypatch):
+    from loam import catalog, plan
+    monkeypatch.setattr(catalog, "search", lambda **kw: [])
+
+    # non-Sentinel-2 collection is refused in v1
+    with pytest.raises(ValueError, match="only sentinel-2"):
+        plan.build_manifest(op="temporal-composite", collection="landsat-8", aoi=[0, 0, 1, 1],
+                            start="2023-01-01", end="2023-12-31", indices=["NDVI"],
+                            target_res=100.0, output_uri="s3://b/o/")
+    # full-res composite is refused (would stack the whole tile in memory)
+    with pytest.raises(ValueError, match="coarse --target-res"):
+        plan.build_manifest(op="temporal-composite", collection="sentinel-2", aoi=[0, 0, 1, 1],
+                            start="2023-01-01", end="2023-12-31", indices=["NDVI"],
+                            target_res=None, output_uri="s3://b/o/")
+
+
 def test_shape_module_does_no_io():
     # The compute-shape path must never read pixels or hit the network: assert loam/shape.py
     # imports none of the I/O modules (static AST scan, like tests/test_contract.py).
@@ -283,6 +318,120 @@ def test_resample_bad_method_raises():
     from loam.raster import reproject_raster
     with pytest.raises(ValueError, match="unknown resampling"):
         reproject_raster(_fake_raster(1.0), dst_crs="EPSG:4326", resampling="nope")
+
+
+# ── temporal-composite (#6) ──────────────────────────────────────────────────
+
+def _layer(*rows):
+    from loam.raster import Raster
+    return Raster(np.array(rows, np.float32), (10.0, 0, 0, 0, -10.0, 0), "EPSG:32629", None)
+
+
+@pytest.mark.parametrize("reducer,expected", [("median", 1.5), ("mean", 1.5), ("max", 2.0)])
+def test_reduce_layers_reducers(reducer, expected):
+    from loam import ops
+    # pixel [0,0] across 3 dates: 1, 2, NaN(cloud) → median/mean 1.5, max 2 (NaN ignored)
+    layers = [_layer([1.0, 9], [9, 9]), _layer([2.0, 9], [9, 9]), _layer([np.nan, 9], [9, 9])]
+    out = ops.reduce_layers(layers, reducer)
+    assert out.data[0, 0] == pytest.approx(expected)
+    assert out.crs == "EPSG:32629"
+
+
+def test_reduce_layers_all_cloud_pixel_stays_nan():
+    from loam import ops
+    layers = [_layer([np.nan, 1], [1, 1]) for _ in range(3)]
+    out = ops.reduce_layers(layers, "median")
+    assert np.isnan(out.data[0, 0]) and out.data[1, 1] == pytest.approx(1.0)
+
+
+def test_reduce_layers_aligns_mismatched_shapes():
+    from loam import ops
+    from loam.raster import Raster
+    big = Raster(np.full((4, 4), 3.0, np.float32), (10.0, 0, 0, 0, -10.0, 0), "EPSG:32629", None)
+    small = Raster(np.full((2, 2), 9.0, np.float32), (20.0, 0, 0, 0, -20.0, 0), "EPSG:32629", None)
+    out = ops.reduce_layers([big, small], "max")  # must not raise on shape mismatch
+    assert out.data.shape == (4, 4)  # reduced onto the finest grid
+    assert out.data.max() == pytest.approx(9.0)
+
+
+def test_reduce_layers_bad_reducer_raises():
+    from loam import ops
+    with pytest.raises(ValueError, match="unknown reducer"):
+        ops.reduce_layers([_layer([1.0])], "p95")
+
+
+def test_temporal_composite_needs_exactly_one_target():
+    from loam import ops
+    with pytest.raises(ValueError, match="exactly one"):
+        ops.temporal_composite([{"nir": "n"}], index="NDVI", band="red")
+
+
+def test_shard_by_tile_groups_and_orders():
+    scenes = [
+        Scene(id="S2B_31QAB_20230101_0_L2A", datetime="2023-01-01", assets={}),
+        Scene(id="S2B_30QTH_20230101_0_L2A", datetime="2023-01-01", assets={}),
+        Scene(id="S2A_30QTH_20230201_0_L2A", datetime="2023-02-01", assets={}),
+    ]
+    shards = shard_by_tile(scenes, "sentinel-2-l2a")
+    assert len(shards) == 2
+    # tiles sorted → 30QTH is shard 0 (2 dates), 31QAB is shard 1 (deterministic)
+    assert [s.index for s in shards] == [0, 1]
+    assert len(shards[0].scene_ids) == 2 and len(shards[1].scene_ids) == 1
+
+
+def test_shard_by_tile_unparseable_raises():
+    with pytest.raises(ValueError, match="cannot parse a spatial tile"):
+        shard_by_tile([Scene(id="not-a-sentinel-id", datetime="", assets={})], "sentinel-2-l2a")
+
+
+def test_run_shard_temporal_composite_end_to_end(tmp_path, monkeypatch):
+    # Full path: a 3-date tile → run_shard writes ONE composite GeoTIFF; a bad date is recorded
+    # but doesn't sink the shard.
+    import rasterio
+    from loam import ops, run, state
+
+    out = str(tmp_path / "out")
+    scenes = [Scene(id=f"S2B_30QTH_2023010{i}_0_L2A", datetime=f"2023-01-0{i}",
+                    assets={"nir": f"n{i}", "red": f"r{i}"}) for i in range(1, 4)]
+    m = Manifest(
+        version=MANIFEST_VERSION, op="temporal-composite",
+        params={"format": "cog", "reducer": "median", "index": "NDVI", "target_res": 100.0},
+        collection="sentinel-2-l2a", aoi=[0, 0, 1, 1], output_uri=out, scenes=scenes,
+    )
+    m.shards = shard_by_tile(scenes, "sentinel-2-l2a")
+    manifest_uri = str(tmp_path / "m.json")
+    state.put_text(manifest_uri, m.to_json())
+
+    # scene_layer reads bands via band_math → _read_band_raster; nir=3,red=1 → NDVI 0.5.
+    # Make the "r3" (third date red) href fail, to exercise drop-and-record.
+    def fake_read(href, target_res=None):
+        if href == "r3":
+            raise OSError("boom reading r3")
+        return _fake_raster(3.0 if href.startswith("n") else 1.0, 32, 32)
+    monkeypatch.setattr(ops, "_read_band_raster", fake_read)
+
+    s = run.run_shard(manifest_uri, 0)
+    assert s["status"] == "done"
+    assert s["scenes"] == 3
+    assert s["outputs"] == 1                     # one mosaic
+    assert len(s["failed"]) == 1                 # the r3 date dropped + recorded
+    tif = state.output_uri_for(out, 0, "composite__NDVI.tif")
+    with rasterio.open(tif) as src:
+        assert src.crs.to_string() == "EPSG:32629"
+        assert abs(float(src.read(1).mean()) - 0.5) < 1e-4
+
+
+def test_shape_temporal_composite_peak_scales_with_scenes():
+    from loam import shape
+    s = shape.shape_for(
+        "temporal-composite", {"index": "NDVI", "reducer": "median", "target_res": 100.0},
+        30, "sentinel-2-l2a",
+    )
+    assert s["outputs"] == 1
+    assert s["bands_read"] == 3  # nir, red, scl
+    # peak holds the WHOLE stack: finest_px * (n_scenes+1) * 4
+    side = int(10980 * 10 / 100)
+    assert s["peak_rss_bytes"] == side * side * (30 + 1) * 4
 
 
 def test_safe_eval_all_catalog_equations():

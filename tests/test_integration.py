@@ -149,3 +149,36 @@ def test_end_to_end_resample_over_real_cogs(tmp_path):
     tif = state.output_uri_for(out, 0, f"{m.scenes[0].id}__red.tif")
     with rasterio.open(tif) as src:
         assert src.crs.to_string() == "EPSG:4326"  # reprojected off UTM
+
+
+def test_end_to_end_temporal_composite_over_real_cogs(tmp_path):
+    """Composite several real same-tile Sentinel-2 dates into one median-NDVI mosaic."""
+    import numpy as np
+    import rasterio
+
+    from loam import plan, run, state
+
+    out = str(tmp_path / "out")
+    manifest_uri = str(tmp_path / "manifest.json")
+
+    m = plan.build_manifest(
+        op="temporal-composite", collection="sentinel-2", aoi=_AOI, start=_START, end=_END,
+        indices=["NDVI"], reducer="median", max_cloud=40, limit=4,
+        target_res=200.0,  # coarse → tiny read, bounded memory
+        output_uri=out,
+    )
+    assert len(m.scenes) >= 2          # need a stack to reduce
+    assert len(m.shards) >= 1          # sharded by MGRS tile
+    plan.write_manifest(m, manifest_uri)
+
+    summary = run.run_shard(manifest_uri, 0)
+    assert summary["status"] == "done"
+    assert summary["outputs"] == 1     # ONE mosaic per tile
+
+    tif = state.output_uri_for(out, 0, "composite__NDVI.tif")
+    with rasterio.open(tif) as src:
+        assert src.crs is not None
+        data = src.read(1)
+    finite = data[np.isfinite(data)]
+    assert finite.size > 0
+    assert finite.min() >= -1.0001 and finite.max() <= 1.0001  # plausible NDVI
