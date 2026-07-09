@@ -5,6 +5,17 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Changed
+- `loam.__version__` is now read from installed package metadata (`importlib.metadata`), so
+  `pyproject.toml` is the single source of truth and the CLI can't drift from the published
+  version. The release workflow now asserts the built wheel's `loam --version` equals the tag.
+
+## [0.2.0] — 2026-07-08
+
+Parity ops: loam now covers the operations half of SageMaker Geospatial's EOJ **and** VEJ —
+band-math, cloud-mask, resample/reproject, temporal composites, and reverse-geocode — plus
+per-shard compute-shape estimates and a job ledger.
+
 ### Added
 - **Vector enrichment: reverse-geocode** (closes #12, v1): `loam plan --op reverse-geocode --input
   points.csv` (CSV or GeoJSON of lat/lon) chunks rows into shards; `run-shard` appends place
