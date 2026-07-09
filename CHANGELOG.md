@@ -6,6 +6,15 @@ versions follow semver.
 ## [Unreleased]
 
 ### Added
+- **Temporal composite / geomosaic op** (closes #6): `loam plan --op temporal-composite --reducer
+  median|mean|max --indices NDVI` (or `--bands`) reduces a stack of scenes over time into one
+  cloud-free-ish mosaic per MGRS tile. New spatial sharder `manifest.shard_by_tile` groups a tile's
+  full time series into one shard (deterministic; fails loud at plan time on unparseable ids).
+  `ops.reduce_layers`/`temporal_composite` do a NaN-aware pixel-wise reduce over SCL-masked layers
+  resampled to a common grid — pure numpy, **no stackstac/xarray**. `run_shard` reads date-by-date
+  so a bad date is dropped (recorded in `failed`), failing only if none survive. Sentinel-2 only in
+  v1; memory bounded via `target_res` (full-res refused). `loam/shape.py` models the whole-stack
+  peak RAM (scales with scene count). Windowed full-res reads deferred to v2.
 - **Per-shard compute-shape estimation** (closes #17): `loam plan` now attaches a `shape` block to
   each shard — bands read, approx decoded bytes read, peak working-set RAM, and an estimated
   runtime — computed by the new pure `loam/shape.py` from metadata alone, with **zero pixel reads

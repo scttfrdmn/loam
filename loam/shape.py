@@ -85,6 +85,11 @@ def _bands_and_outputs(op: str, params: dict) -> tuple[list[str], int, list[int]
         bands = list(params.get("bands", []))
         # one output per band; each output is produced from a single input band
         return bands, len(bands), [1] if bands else [0]
+    if op == "temporal-composite":
+        idx, band = params.get("index"), params.get("band")
+        read = (sorted(bands_in(_equation_of(idx)) | {"scl"}) if idx
+                else ([band, "scl"] if band else []))
+        return read, 1, [len(read)]  # one mosaic output
     return [], 0, [0]
 
 
@@ -108,12 +113,18 @@ def shape_for(op: str, params: dict, n_scenes: int, collection: str) -> dict:
     bytes_per_scene = sum(band_px.values()) * DTYPE_BYTES
     approx_bytes_read = n_scenes * bytes_per_scene
 
-    # Peak working set = ONE scene (run_shard loops scenes sequentially, freeing each). For
-    # band-math a scene holds every index's result at once, but each index loads only its own
-    # bands → max_i(bands_i) input arrays + n_outputs result arrays (+1 slack for transients).
     finest_px = max(band_px.values()) if band_px else 0
-    peak_arrays = max(per_out_counts) + n_out + 1
-    peak_rss_bytes = finest_px * peak_arrays * DTYPE_BYTES
+    if op == "temporal-composite":
+        # A composite materializes the WHOLE tile stack (all n_scenes layers) at once to reduce
+        # over time → peak scales with scene count, not one scene. This is why full-res composites
+        # are refused (see plan.build_manifest) and target_res is the memory knob.
+        peak_rss_bytes = finest_px * (n_scenes + 1) * DTYPE_BYTES
+    else:
+        # Peak working set = ONE scene (run_shard loops scenes sequentially, freeing each). For
+        # band-math a scene holds every index's result at once, but each index loads only its own
+        # bands → max_i(bands_i) input arrays + n_outputs result arrays (+1 slack for transients).
+        peak_arrays = max(per_out_counts) + n_out + 1
+        peak_rss_bytes = finest_px * peak_arrays * DTYPE_BYTES
 
     est_seconds = n_scenes * len(bands) * OPEN_OVERHEAD_S + approx_bytes_read / THROUGHPUT_BYTES_PER_S
 

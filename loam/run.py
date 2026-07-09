@@ -84,6 +84,35 @@ def _process_scene(op: str, params: dict, scene: Scene) -> dict[str, Raster]:
     raise ValueError(f"unknown op {op!r}")
 
 
+def _composite_shard(
+    params: dict, scenes: list[Scene]
+) -> tuple[str, Raster | None, list[dict]]:
+    """Reduce a shard's scenes (one tile's time series) into one composite Raster.
+
+    Reads each date via ``ops.scene_layer`` so an unreadable date is dropped and recorded rather
+    than sinking the tile. Returns (output_name, raster_or_None, failed); raster is None if no date
+    survives (caller marks the shard failed).
+    """
+    target_res = params.get("target_res")
+    idx, band = params.get("index"), params.get("band")
+    name = idx or band or "composite"
+
+    layers: list[Raster] = []
+    failed: list[dict] = []
+    for scene in scenes:
+        try:
+            layers.append(ops.scene_layer(
+                scene.assets, index=idx, band=band, target_res=target_res,
+            ))
+        except Exception as e:  # a bad date must not sink the tile; drop + record
+            failed.append({"scene": scene.id, "error": str(e)})
+
+    if not layers:
+        return name, None, failed
+    raster = ops.reduce_layers(layers, params.get("reducer", "median"))
+    return name, raster, failed
+
+
 def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force: bool = False) -> dict:
     """Run a single shard. Returns a small summary dict (also useful for tests)."""
     manifest = Manifest.from_json(state.get_text(manifest_uri, region=region))
@@ -98,18 +127,29 @@ def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force
     bytes_written = 0
     started = time.monotonic()
 
-    for scene in scenes:
-        try:
-            results = _process_scene(manifest.op, manifest.params, scene)
-        except Exception as e:  # a bad scene must not sink the shard; record and continue
-            failed.append({"scene": scene.id, "error": str(e)})
-            continue
-        for name, raster in results.items():
+    if manifest.op == "temporal-composite":
+        # Shard-level op: reduce the whole tile's time series into ONE output. A bad date is
+        # dropped (recorded in failed); the shard fails only if no date survives.
+        name, raster, failed = _composite_shard(manifest.params, scenes)
+        if raster is not None:
             uri, nbytes = _save_raster(
-                manifest.output_uri, index, scene.id, name, raster, fmt, region=region
+                manifest.output_uri, index, "composite", name, raster, fmt, region=region
             )
             written.append(uri)
             bytes_written += nbytes
+    else:
+        for scene in scenes:
+            try:
+                results = _process_scene(manifest.op, manifest.params, scene)
+            except Exception as e:  # a bad scene must not sink the shard; record and continue
+                failed.append({"scene": scene.id, "error": str(e)})
+                continue
+            for name, raster in results.items():
+                uri, nbytes = _save_raster(
+                    manifest.output_uri, index, scene.id, name, raster, fmt, region=region
+                )
+                written.append(uri)
+                bytes_written += nbytes
 
     # Checkpoint LAST — only now is the shard's output durable (delete-after-durable). The summary
     # doubles as the job-ledger row `loam status --detail` aggregates (bytes/seconds/failures).

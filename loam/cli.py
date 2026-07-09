@@ -60,6 +60,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         dst_crs=args.dst_crs,
         dst_res=args.dst_res,
         resampling=args.resampling,
+        reducer=args.reducer,
         max_cloud=args.max_cloud,
         shard_size=args.shard_size,
         limit=args.limit,
@@ -156,7 +157,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     pp = sub.add_parser("plan", help="search + shard into a manifest")
-    pp.add_argument("--op", required=True, choices=["band-math", "cloud-mask", "resample"])
+    pp.add_argument("--op", required=True,
+                    choices=["band-math", "cloud-mask", "resample", "temporal-composite"])
     pp.add_argument("--collection", default="sentinel-2")
     pp.add_argument("--aoi", type=_aoi, required=True, help="W,S,E,N (WGS84)")
     pp.add_argument("--start", required=True, help="YYYY-MM-DD or RFC3339")
@@ -168,6 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="target pixel size in dst-crs units (resample; omit to preserve count)")
     pp.add_argument("--resampling", default="bilinear",
                     help="resampling method: nearest|bilinear|cubic|average|… (resample)")
+    pp.add_argument("--reducer", choices=["median", "mean", "max"], default="median",
+                    help="time-reduction for temporal-composite (default median)")
     pp.add_argument("--max-cloud", type=float, default=None)
     pp.add_argument("--shard-size", type=int, default=50)
     pp.add_argument("--limit", type=int, default=None)

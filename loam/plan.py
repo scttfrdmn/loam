@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from . import catalog, state
 from .indices import parse_spec
-from .manifest import Manifest, MANIFEST_VERSION, shard_scenes
+from .manifest import Manifest, MANIFEST_VERSION, shard_by_tile, shard_scenes
 
 
 def build_manifest(
@@ -28,6 +28,7 @@ def build_manifest(
     dst_crs: str | None = None,
     dst_res: float | None = None,
     resampling: str = "bilinear",
+    reducer: str = "median",
     max_cloud: float | None = None,
     shard_size: int = 50,
     limit: int | None = None,
@@ -62,8 +63,32 @@ def build_manifest(
             raise ValueError("resample requires --dst-crs")
         params.update(bands=bands, dst_crs=dst_crs, dst_res=dst_res, resampling=resampling)
         wanted |= set(bands)
+    elif op == "temporal-composite":
+        # v1: Sentinel-2 only (the per-tile no-reproject shortcut is MGRS-specific), and bounded
+        # memory relies on target_res (the whole tile stack is materialized), so refuse full-res.
+        if "sentinel-2" not in collection and "sentinel2" not in collection:
+            raise ValueError("temporal-composite supports only sentinel-2 in v1")
+        if target_res is None:
+            raise ValueError(
+                "temporal-composite needs a coarse --target-res (full-res stacks the whole tile "
+                "over all dates in memory); e.g. --target-res 100"
+            )
+        one_index = indices[0] if indices else None
+        one_band = bands[0] if bands else None
+        if (one_index is None) == (one_band is None):
+            raise ValueError("temporal-composite needs exactly one of --indices / --bands")
+        params.update(reducer=reducer, index=one_index, band=one_band)
+        from .indices import bands_in
+
+        if one_index is not None:
+            wanted |= bands_in(parse_spec(one_index).equation)
+        else:
+            assert one_band is not None  # exactly-one check above guarantees this
+            wanted.add(one_band)
     else:
-        raise ValueError(f"unknown op {op!r} (known: band-math, cloud-mask, resample)")
+        raise ValueError(
+            f"unknown op {op!r} (known: band-math, cloud-mask, resample, temporal-composite)"
+        )
 
     scenes = catalog.search(
         collection=collection,
@@ -75,13 +100,18 @@ def build_manifest(
         stac_url=stac_url,
         wanted_bands=wanted,
     )
-    shards = shard_scenes(scenes, shard_size)
+    coll_id = catalog.resolve_collection(collection)
+    # temporal-composite groups a whole tile's time series into one shard; everything else shards
+    # by scene count.
+    if op == "temporal-composite":
+        shards = shard_by_tile(scenes, coll_id)
+    else:
+        shards = shard_scenes(scenes, shard_size)
 
     # Attach a compute-shape estimate per shard (pure metadata — no pixel reads). Scene count
-    # differs on the last shard, so each shard is estimated from its own membership.
+    # differs per shard, so each shard is estimated from its own membership.
     from . import shape as shapemod
 
-    coll_id = catalog.resolve_collection(collection)
     for sh in shards:
         sh.shape = shapemod.shape_for(op, params, len(sh.scene_ids), coll_id)
 
