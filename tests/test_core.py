@@ -481,6 +481,118 @@ def test_reverse_geocode_offline_backend():
     assert enr[0]["geo_name"]  # a place name resolved
 
 
+# ── zonal statistics (#34) ───────────────────────────────────────────────────
+
+def _write_ramp_raster(path):
+    # 10x10 UTM raster, 10m pixels; row r has value r (so mean of rows 0-4 = 2.0). NaN band-masks.
+    from loam import state
+    from loam.raster import Raster, write_geotiff
+    data = np.tile(np.arange(10, dtype=np.float32).reshape(10, 1), (1, 10))
+    r = Raster(data=data, transform=(10.0, 0, 500000.0, 0, -10.0, 2200000.0),
+               crs="EPSG:32629", nodata=float("nan"))
+    state.put_bytes(path, write_geotiff(path, r, cog=False))
+
+
+def _wgs84_poly_over_rows(top_row, bottom_row):
+    # Build a WGS84 polygon covering raster rows [top_row, bottom_row) across all columns.
+    from rasterio.warp import transform_geom
+    y_top = 2200000.0 - top_row * 10.0
+    y_bot = 2200000.0 - bottom_row * 10.0
+    utm = {"type": "Polygon", "coordinates": [[
+        [500000, y_top], [500100, y_top], [500100, y_bot], [500000, y_bot], [500000, y_top]]]}
+    return transform_geom("EPSG:32629", "EPSG:4326", utm)
+
+
+def test_zonal_stats_math(tmp_path):
+    from loam import zonal
+    tif = str(tmp_path / "ramp.tif")
+    _write_ramp_raster(tif)
+    out = zonal.zonal_stats(tif, _wgs84_poly_over_rows(0, 5), ["mean", "min", "max", "count", "p50"])
+    assert out["zs_count"] == 50
+    assert out["zs_mean"] == pytest.approx(2.0)   # rows 0..4
+    assert out["zs_min"] == pytest.approx(0.0)
+    assert out["zs_max"] == pytest.approx(4.0)
+    assert out["zs_p50"] == pytest.approx(2.0)
+
+
+def test_zonal_stats_empty_zone_is_null_and_json_safe(tmp_path):
+    import json
+    from loam import zonal
+    tif = str(tmp_path / "ramp.tif")
+    _write_ramp_raster(tif)
+    # a tiny polygon near (0,0) lon/lat — nowhere near the UTM raster
+    far = {"type": "Polygon", "coordinates": [[[0, 0], [0.001, 0], [0.001, 0.001], [0, 0], [0, 0]]]}
+    out = zonal.zonal_stats(tif, far, ["mean", "count"])
+    assert out["zs_count"] == 0
+    assert out["zs_mean"] is None
+    json.dumps(out)  # must not raise (no NaN)
+
+
+def test_zonal_stats_bad_stat_raises(tmp_path):
+    from loam import zonal
+    tif = str(tmp_path / "ramp.tif")
+    _write_ramp_raster(tif)
+    with pytest.raises(ValueError, match="unknown stat"):
+        zonal.zonal_stats(tif, _wgs84_poly_over_rows(0, 2), ["bogus"])
+
+
+def test_read_polygons_rejects_points():
+    import json
+    from loam import vector
+    pts = json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {}, "geometry": {"type": "Point", "coordinates": [0, 0]}}]})
+    with pytest.raises(ValueError, match="Polygon/MultiPolygon"):
+        vector.read_polygons(pts)
+
+
+def test_build_manifest_zonal_stats_no_stac(tmp_path, monkeypatch):
+    import json
+    from loam import catalog, plan
+    monkeypatch.setattr(catalog, "search", lambda **kw: (_ for _ in ()).throw(
+        AssertionError("zonal-stats must not call STAC")))
+    zones = tmp_path / "z.geojson"
+    zones.write_text(json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"id": i}, "geometry": _wgs84_poly_over_rows(i, i + 1)}
+        for i in range(3)]}))
+    out = str(tmp_path / "out")
+    m = plan.build_manifest(op="zonal-stats", output_uri=out, zones_uri=str(zones),
+                            raster_uri="s3://b/ndvi.tif", stats=["mean", "count"],
+                            rows_per_shard=1)
+    assert m.collection == "vector" and m.params["raster"] == "s3://b/ndvi.tif"
+    assert len(m.shards) == 3  # 3 zones, 1 per shard
+    assert m.scenes[0].assets["zones"].endswith(".geojson")
+
+
+def test_build_manifest_zonal_stats_requires_zones_and_raster(tmp_path):
+    from loam import plan
+    with pytest.raises(ValueError, match="requires --zones"):
+        plan.build_manifest(op="zonal-stats", output_uri="s3://b/o", raster_uri="s3://b/r.tif")
+    with pytest.raises(ValueError, match="requires --raster"):
+        plan.build_manifest(op="zonal-stats", output_uri="s3://b/o", zones_uri="s3://b/z.geojson")
+
+
+def test_run_shard_zonal_stats_end_to_end(tmp_path):
+    import json
+    from loam import plan, run, state
+    tif = str(tmp_path / "ramp.tif")
+    _write_ramp_raster(tif)
+    zones = tmp_path / "z.geojson"
+    zones.write_text(json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"name": "top"}, "geometry": _wgs84_poly_over_rows(0, 5)}]}))
+    out = str(tmp_path / "out")
+    mu = str(tmp_path / "m.json")
+    m = plan.build_manifest(op="zonal-stats", output_uri=out, zones_uri=str(zones),
+                            raster_uri=tif, stats=["mean", "count"], fmt="geojson")
+    plan.write_manifest(m, mu)
+    s = run.run_shard(mu, 0)
+    assert s["status"] == "done" and s["outputs"] == 1 and not s["failed"]
+    result = json.loads(state.get_text(state.output_uri_for(out, 0, "chunk-00000__zonalstats.geojson")))
+    props = result["features"][0]["properties"]
+    assert props["name"] == "top"                 # original property carried through
+    assert props["zs_mean"] == pytest.approx(2.0)  # zonal stat merged in
+    assert run.run_shard(mu, 0)["status"] == "skipped"  # idempotent
+
+
 def test_build_manifest_reverse_geocode_no_stac(tmp_path, monkeypatch):
     from loam import catalog, plan
 

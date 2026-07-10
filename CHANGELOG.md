@@ -5,6 +5,15 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Added
+- **Zonal statistics op** (closes #34): `loam plan --op zonal-stats --zones zones.geojson --raster
+  ndvi.tif --stat mean,min,max,count,p90` aggregates an existing single-band raster COG within
+  polygon zones, emitting per-zone stats (mean/min/max/sum/median/std/count/percentiles) merged
+  into the zones' properties (GeoJSON or CSV out). Composes as step 2 after `band-math` — the
+  clearest remaining SageMaker-Geospatial EOJ parity gap, now closed. Pure `loam/zonal.py`
+  (windowed reads, WGS84→raster-CRS reprojection, NaN/cloud exclusion) — **no new dependency**
+  (rasterio.features/warp); empty zones report null (JSON-safe) stats.
+
 ## [0.3.0] — 2026-07-09
 
 Runner integrations + migration docs: loam now emits capacity-watch fleets and runs under

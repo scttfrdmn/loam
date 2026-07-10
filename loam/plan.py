@@ -40,6 +40,10 @@ def build_manifest(
     rows_per_shard: int = 5000,
     lat_field: str | None = None,
     lon_field: str | None = None,
+    # zonal-stats — reduce an existing raster COG within polygon zones
+    zones_uri: str | None = None,
+    raster_uri: str | None = None,
+    stats: list[str] | None = None,
 ) -> Manifest:
     """Search, shard, and assemble a Manifest (does not write it — caller persists).
 
@@ -47,11 +51,16 @@ def build_manifest(
     continental-scale change detection; pass ``None`` for native full resolution when the
     features of interest are small (e.g. Sentinel-2 10m for fairy-circle detection).
     """
-    # Row (vector) ops read points from a file, not STAC — they bypass search entirely.
+    # Row (vector) ops read features from a file, not STAC — they bypass search entirely.
     if op == "reverse-geocode":
         return _build_vector_manifest(
             op=op, output_uri=output_uri, input_uri=input_uri, fmt=fmt,
             rows_per_shard=rows_per_shard, lat_field=lat_field, lon_field=lon_field,
+        )
+    if op == "zonal-stats":
+        return _build_zonal_manifest(
+            output_uri=output_uri, zones_uri=zones_uri, raster_uri=raster_uri,
+            stats=stats, fmt=fmt, rows_per_shard=rows_per_shard,
         )
 
     # Raster ops require a search footprint + date range.
@@ -159,6 +168,8 @@ def _build_vector_manifest(
 
     if not input_uri:
         raise ValueError(f"{op} requires --input (a CSV or GeoJSON of points)")
+    if fmt == "cog":
+        fmt = "csv"  # library default falls through as cog; a row op defaults to csv
     if fmt not in ("csv", "geojson"):
         raise ValueError(f"{op} requires --format csv or geojson (got {fmt!r})")
     if rows_per_shard < 1:
@@ -182,6 +193,49 @@ def _build_vector_manifest(
     shards = shard_scenes(scenes, 1)  # one row-chunk per shard (the chunk already sized the work)
     return Manifest(
         version=MANIFEST_VERSION, op=op, params=params, collection="vector", aoi=[],
+        output_uri=output_uri, scenes=scenes, shards=shards,
+    )
+
+
+def _build_zonal_manifest(
+    *, output_uri: str, zones_uri: str | None, raster_uri: str | None,
+    stats: list[str] | None, fmt: str, rows_per_shard: int, region: str | None = None,
+) -> Manifest:
+    """Build a manifest for zonal-stats: chunk polygon zones into shards over an existing raster.
+
+    No STAC search. Reads the zones GeoJSON, chunks features into shards (like the row ops), and
+    stores the raster COG href + requested stats in params — each shard reads that one raster.
+    """
+    from . import vector
+    from .manifest import Scene, shard_scenes
+
+    if not zones_uri:
+        raise ValueError("zonal-stats requires --zones (a GeoJSON of polygon zones)")
+    if not raster_uri:
+        raise ValueError("zonal-stats requires --raster (a single-band COG, e.g. a band-math output)")
+    if fmt == "cog":
+        fmt = "geojson"  # library default falls through as cog; zones are geojson-native
+    if fmt not in ("csv", "geojson"):
+        raise ValueError(f"zonal-stats requires --format csv or geojson (got {fmt!r})")
+    if rows_per_shard < 1:
+        raise ValueError("--rows-per-shard must be >= 1")
+    stat_list = stats or ["mean", "min", "max", "count"]
+
+    text = state.get_text(zones_uri, region=region)
+    zones = vector.read_polygons(text)
+
+    scenes: list[Scene] = []
+    for i in range(0, len(zones), rows_per_shard):
+        chunk = zones[i : i + rows_per_shard]
+        cid = f"chunk-{i // rows_per_shard:05d}"
+        chunk_uri = state.join(output_uri, "_input", f"{cid}.geojson")
+        state.put_text(chunk_uri, vector.write_chunk(chunk, "geojson"), region=region)
+        scenes.append(Scene(id=cid, datetime="", assets={"zones": chunk_uri}))
+
+    params = {"format": fmt, "raster": raster_uri, "stats": stat_list}
+    shards = shard_scenes(scenes, 1)
+    return Manifest(
+        version=MANIFEST_VERSION, op="zonal-stats", params=params, collection="vector", aoi=[],
         output_uri=output_uri, scenes=scenes, shards=shards,
     )
 
