@@ -23,8 +23,14 @@ import json
 from collections.abc import Sequence
 from typing import Any, Callable
 
-# Enrichment fields appended to each row (CSV columns / GeoJSON feature properties).
-GEO_FIELDS = ["geo_name", "geo_admin1", "geo_admin2", "geo_cc"]
+# Enrichment fields appended to each row (CSV columns / GeoJSON feature properties). The offline
+# backend fills name/admin1/admin2/cc (city/admin level); the online Nominatim backend additionally
+# fills geo_address (a full street-level display string). Both share this schema so output columns
+# are stable regardless of backend.
+GEO_FIELDS = ["geo_name", "geo_admin1", "geo_admin2", "geo_cc", "geo_address"]
+
+# Public Nominatim endpoint. Overridable for a self-hosted instance (higher rate limits).
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
 
 # Common lat/lon column-name aliases tried when the caller doesn't specify.
 _LAT_ALIASES = ("lat", "latitude", "y")
@@ -50,14 +56,58 @@ def _offline_backend(points: list[tuple[float, float]]) -> list[dict[str, str]]:
             "geo_admin1": r.get("admin1", ""),
             "geo_admin2": r.get("admin2", ""),
             "geo_cc": r.get("cc", ""),
+            "geo_address": "",  # offline backend is city/admin level, no street address
         }
         for r in results
     ]
 
 
-# Pluggable backends. Add an online one (Nominatim) here without touching callers.
+# Nominatim is rate-limited to 1 req/s by usage policy; sleep this long between requests.
+_NOMINATIM_MIN_INTERVAL_S = 1.0
+
+
+def _nominatim_backend(points: list[tuple[float, float]]) -> list[dict[str, str]]:
+    """Reverse-geocode via the online Nominatim (OpenStreetMap) API — street-level addresses.
+
+    Online, rate-limited (≤1 req/s), non-deterministic — opt-in, not the default. Respects the
+    Nominatim usage policy (a real User-Agent, ≤1 req/s). For volume, self-host and override
+    ``NOMINATIM_URL``. Endpoint host is read from ``NOMINATIM_URL`` so a self-hosted instance drops
+    in without code changes.
+    """
+    import time
+    import urllib.parse
+    import urllib.request
+
+    from . import __version__
+
+    out: list[dict[str, str]] = []
+    for i, (lat, lon) in enumerate(points):
+        if i:  # polite spacing between requests (skip before the first)
+            time.sleep(_NOMINATIM_MIN_INTERVAL_S)
+        qs = urllib.parse.urlencode({"lat": lat, "lon": lon, "format": "jsonv2"})
+        req = urllib.request.Request(
+            f"{NOMINATIM_URL}?{qs}",
+            headers={"User-Agent": f"loam-geo/{__version__} (https://github.com/scttfrdmn/loam)"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 - fixed https endpoint
+            data = json.loads(resp.read().decode("utf-8"))
+        addr = data.get("address", {})
+        out.append({
+            "geo_name": (addr.get("city") or addr.get("town") or addr.get("village")
+                         or addr.get("hamlet") or addr.get("county") or ""),
+            "geo_admin1": addr.get("state", ""),
+            "geo_admin2": addr.get("county", ""),
+            "geo_cc": (addr.get("country_code") or "").upper(),
+            "geo_address": data.get("display_name", ""),
+        })
+    return out
+
+
+# Pluggable backends. ``offline`` is the default (deterministic, network-free); ``nominatim`` is
+# opt-in for street-level detail. Add more (a self-hosted service, etc.) here without touching callers.
 _BACKENDS: dict[str, Callable[[list[tuple[float, float]]], list[dict[str, str]]]] = {
     "offline": _offline_backend,
+    "nominatim": _nominatim_backend,
 }
 
 

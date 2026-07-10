@@ -79,6 +79,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         rows_per_shard=args.rows_per_shard,
         lat_field=args.lat_field,
         lon_field=args.lon_field,
+        backend=args.backend,
         zones_uri=args.zones,
         raster_uri=args.raster,
         stats=args.stat.split(",") if args.stat else None,
@@ -226,6 +227,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="CSV latitude column (reverse-geocode; default auto-detect)")
     pp.add_argument("--lon-field", dest="lon_field", default=None,
                     help="CSV longitude column (reverse-geocode; default auto-detect)")
+    pp.add_argument("--backend", choices=["offline", "nominatim"], default="offline",
+                    help="reverse-geocode backend: offline (city/admin, default) or nominatim "
+                         "(online, street-level, ≤1 req/s)")
     pp.add_argument("--zones", default=None,
                     help="GeoJSON of polygon zones (zonal-stats)")
     pp.add_argument("--raster", default=None,

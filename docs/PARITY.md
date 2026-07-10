@@ -41,8 +41,7 @@ It fused three things. loam relates to each differently:
 
 | SageMaker Geospatial operation | loam | Status |
 |---|---|---|
-| Reverse geocoding | `--op reverse-geocode` (offline, city/admin-level; CSV + GeoJSON) | ✅ parity (v1) |
-| — street-level addresses | online Nominatim backend | 🔜 planned ([#31](https://github.com/scttfrdmn/loam/issues/31)) |
+| Reverse geocoding | `--op reverse-geocode` (offline city/admin-level, or `--backend nominatim` for online street-level; CSV + GeoJSON) | ✅ parity |
 | Map matching (GPS → roads) | — | ❌ planned ([#30](https://github.com/scttfrdmn/loam/issues/30)) |
 
 ## 3. The executor and the viewer
