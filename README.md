@@ -137,10 +137,10 @@ operations half of SageMaker Geospatial's EOJ **and** VEJ.
 
 **Coming from SageMaker Geospatial?** See **[docs/MIGRATION.md](docs/MIGRATION.md)** — a hands-on
 EOJ-config → loam-CLI mapping with before/after code. And **[docs/PARITY.md](docs/PARITY.md)** for
-the full parity matrix and what loam deliberately does differently: the operations people actually
-ran are covered; the honest remaining gaps are zonal statistics and map-match. Roadmap: runner
-integrations (nf-spawn, lagotto), those gap ops, an arm64/Graviton container, and a
-`titiler`/`leafmap` viewer.
+the full parity matrix and what loam deliberately does differently: **every SageMaker Geospatial
+operation is now covered** — cloud-mask, band-math, temporal composites, resample, zonal-stats,
+reverse-geocode, and map-match. Remaining roadmap is product surface, not ops: an arm64/Graviton
+container and a `titiler`/`leafmap` viewer.
 
 ## Contributing
 

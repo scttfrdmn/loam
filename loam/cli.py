@@ -55,6 +55,14 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         fmt = "csv"
     elif args.op == "zonal-stats" and fmt not in ("csv", "geojson"):
         fmt = "geojson"
+    elif args.op == "map-match":
+        fmt = "geojson"  # matched geometry is geojson-only
+
+    # --backend is shared across ops with different defaults; map-match defaults to valhalla when
+    # the user left the reverse-geocode default in place.
+    backend = args.backend
+    if args.op == "map-match" and backend == "offline":
+        backend = "valhalla"
 
     manifest = build_manifest(
         op=args.op,
@@ -79,10 +87,13 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         rows_per_shard=args.rows_per_shard,
         lat_field=args.lat_field,
         lon_field=args.lon_field,
-        backend=args.backend,
+        backend=backend,
         zones_uri=args.zones,
         raster_uri=args.raster,
         stats=args.stat.split(",") if args.stat else None,
+        trace_field=args.trace_field,
+        traces_per_shard=args.traces_per_shard,
+        max_trace_points=args.max_trace_points,
     )
     write_manifest(manifest, args.manifest, region=args.region)
     print(
@@ -202,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("plan", help="search + shard into a manifest")
     pp.add_argument("--op", required=True,
                     choices=["band-math", "cloud-mask", "resample", "temporal-composite",
-                             "reverse-geocode", "zonal-stats"])
+                             "reverse-geocode", "zonal-stats", "map-match"])
     pp.add_argument("--collection", default="sentinel-2")
     # AOI/date range are required for raster ops; row ops (reverse-geocode) use --input instead.
     # build_manifest validates per-op.
@@ -227,15 +238,22 @@ def build_parser() -> argparse.ArgumentParser:
                     help="CSV latitude column (reverse-geocode; default auto-detect)")
     pp.add_argument("--lon-field", dest="lon_field", default=None,
                     help="CSV longitude column (reverse-geocode; default auto-detect)")
-    pp.add_argument("--backend", choices=["offline", "nominatim"], default="offline",
-                    help="reverse-geocode backend: offline (city/admin, default) or nominatim "
-                         "(online, street-level, ≤1 req/s)")
+    pp.add_argument("--backend", default="offline",
+                    choices=["offline", "nominatim", "valhalla", "osrm"],
+                    help="reverse-geocode: offline (default) | nominatim; "
+                         "map-match: valhalla (default) | osrm")
     pp.add_argument("--zones", default=None,
                     help="GeoJSON of polygon zones (zonal-stats)")
     pp.add_argument("--raster", default=None,
                     help="single-band COG to summarize, e.g. a band-math output (zonal-stats)")
     pp.add_argument("--stat", default="mean,min,max,count",
                     help="comma list: mean,min,max,sum,median,std,count,pNN (zonal-stats)")
+    pp.add_argument("--trace-field", dest="trace_field", default="trace_id",
+                    help="column/property grouping points into traces (map-match; default trace_id)")
+    pp.add_argument("--traces-per-shard", dest="traces_per_shard", type=int, default=200,
+                    help="whole traces per shard (map-match; default 200)")
+    pp.add_argument("--max-trace-points", dest="max_trace_points", type=int, default=100,
+                    help="skip+record traces longer than this (map-match; default 100)")
     pp.add_argument("--max-cloud", type=float, default=None)
     pp.add_argument("--shard-size", type=int, default=50)
     pp.add_argument("--limit", type=int, default=None)

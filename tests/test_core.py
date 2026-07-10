@@ -637,6 +637,141 @@ def test_run_shard_zonal_stats_end_to_end(tmp_path):
     assert run.run_shard(mu, 0)["status"] == "skipped"  # idempotent
 
 
+# ── map-match (#30) ──────────────────────────────────────────────────────────
+
+def _encode_polyline6(coords):
+    """Precision-6 polyline encoder (test helper; inverse of vector._decode_polyline6)."""
+    def enc(value):
+        v = int(round(value * 1e6))
+        v = ~(v << 1) if v < 0 else (v << 1)
+        out = ""
+        while v >= 0x20:
+            out += chr((0x20 | (v & 0x1F)) + 63)
+            v >>= 5
+        return out + chr(v + 63)
+    s = ""
+    plat = plon = 0
+    for lat, lon in coords:
+        ilat, ilon = int(round(lat * 1e6)), int(round(lon * 1e6))
+        s += enc((ilat - plat) / 1e6) + enc((ilon - plon) / 1e6)
+        plat, plon = ilat, ilon
+    return s
+
+
+def test_decode_polyline6_round_trip():
+    from loam.vector import _decode_polyline6
+
+    known = [(38.5, -120.2), (40.7, -120.95), (43.252, -126.453)]
+    dec = _decode_polyline6(_encode_polyline6(known))  # returns [lon, lat]
+    for (lat, lon), (x, y) in zip(known, dec):
+        assert x == pytest.approx(lon) and y == pytest.approx(lat)
+
+
+def test_read_trace_points_groups_and_orders():
+    from loam import vector
+    csv = "trace_id,lat,lon\nA,40.0,-74.0\nA,40.1,-74.1\nB,41.0,-75.0\nA,40.2,-74.2\n"
+    traces = vector.read_trace_points(csv, "csv")
+    assert list(traces) == ["A", "B"]                    # insertion order
+    assert traces["A"] == [(40.0, -74.0), (40.1, -74.1), (40.2, -74.2)]  # input order preserved
+    # missing trace field raises; trace_field=None → one trace
+    with pytest.raises(ValueError, match="not found"):
+        vector.read_trace_points("lat,lon\n1,2\n", "csv", trace_field="trace_id")
+    assert list(vector.read_trace_points("lat,lon\n1,2\n3,4\n", "csv", trace_field=None)) == ["trace"]
+
+
+def test_map_match_backends_mocked(monkeypatch):
+    import json as _json
+    from loam import vector
+
+    coords = [(40.0, -74.0), (40.001, -74.001)]
+
+    # OSRM: geojson geometry + confidence, straight from the response
+    osrm = {"matchings": [{"geometry": {"type": "LineString",
+            "coordinates": [[-74.0, 40.0], [-74.001, 40.001]]}, "confidence": 0.9}]}
+    # Valhalla: encoded polyline6 shape + edges with way ids
+    valhalla = {"shape": _encode_polyline6(coords), "edges": [{"way_id": 7, "names": ["Main St"]}]}
+
+    class _Resp:
+        def __init__(self, payload): self._p = payload
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return _json.dumps(self._p).encode()
+
+    import urllib.request
+    monkeypatch.setattr(vector, "_MATCH_MIN_INTERVAL_S", 0)
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=60: _Resp(osrm))
+    o = vector.map_match(coords, backend="osrm")
+    assert o["geometry"]["type"] == "LineString" and o["match_confidence"] == 0.9
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=60: _Resp(valhalla))
+    v = vector.map_match(coords, backend="valhalla")
+    assert v["match_way_ids"] == [7] and v["match_names"] == ["Main St"]
+    assert len(v["geometry"]["coordinates"]) == 2   # decoded polyline6
+
+    with pytest.raises(ValueError, match="unknown map-match backend"):
+        vector.map_match(coords, backend="nope")
+
+
+def test_write_matched_one_feature_per_trace():
+    import json
+    from loam import vector
+    matches = [
+        ("A", {"geometry": {"type": "LineString", "coordinates": [[-74, 40], [-74.1, 40.1]]},
+               "match_confidence": 0.9, "match_way_ids": [1], "match_names": ["X"]}),
+        ("B", {"geometry": {"type": "LineString", "coordinates": [[-75, 41]]},
+               "match_confidence": None, "match_way_ids": [], "match_names": []}),
+    ]
+    fc = json.loads(vector.write_matched(matches))
+    assert len(fc["features"]) == 2
+    assert fc["features"][0]["properties"]["match_trace_id"] == "A"
+    assert fc["features"][1]["properties"]["match_confidence"] is None  # JSON-safe null
+
+
+def test_build_manifest_map_match_shards_by_trace(tmp_path, monkeypatch):
+    from loam import catalog, plan
+    monkeypatch.setattr(catalog, "search", lambda **kw: (_ for _ in ()).throw(
+        AssertionError("map-match must not call STAC")))
+    csv = tmp_path / "t.csv"
+    csv.write_text("trace_id,lat,lon\nA,40,-74\nA,40.1,-74.1\nB,41,-75\nC,42,-76\n")
+    out = str(tmp_path / "out")
+    m = plan.build_manifest(op="map-match", output_uri=out, input_uri=str(csv),
+                            traces_per_shard=2)
+    assert m.collection == "vector" and m.params["backend"] == "valhalla"
+    assert len(m.shards) == 2                        # 3 traces, 2 per shard → 2 shards
+    assert m.scenes[0].assets["points"].endswith(".csv")
+
+
+def test_run_shard_map_match_end_to_end(tmp_path, monkeypatch):
+    import json
+    from loam import plan, run, state, vector
+
+    monkeypatch.setattr(vector, "map_match", lambda coords, backend="valhalla": {
+        "geometry": {"type": "LineString", "coordinates": [[lon, lat] for lat, lon in coords]},
+        "match_confidence": 0.95, "match_way_ids": [42], "match_names": ["Rd"]})
+    csv = tmp_path / "t.csv"
+    # trace A ok (2 pts); trace B over the max (3 pts with max=2) → recorded in failed
+    csv.write_text("trace_id,lat,lon\nA,40,-74\nA,40.1,-74.1\nB,41,-75\nB,41.1,-75.1\nB,41.2,-75.2\n")
+    out = str(tmp_path / "out")
+    mu = str(tmp_path / "m.json")
+    m = plan.build_manifest(op="map-match", output_uri=out, input_uri=str(csv),
+                            traces_per_shard=10, max_trace_points=2)
+    plan.write_manifest(m, mu)
+    s = run.run_shard(mu, 0)
+    assert s["status"] == "done" and s["outputs"] == 1
+    assert any(f.get("trace") == "B" for f in s["failed"])   # over-long trace recorded
+    fc = json.loads(state.get_text(state.output_uri_for(out, 0, "chunk-00000__matched.geojson")))
+    ids = [f["properties"]["match_trace_id"] for f in fc["features"]]
+    assert ids == ["A"]                              # only the good trace matched
+    assert run.run_shard(mu, 0)["status"] == "skipped"
+
+
+def test_shape_map_match_is_trivial():
+    from loam import shape
+    s = shape.shape_for("map-match", {"format": "geojson"}, 3, "vector")
+    assert s["scenes"] == 3 and s["outputs"] == 1 and s["approx_bytes_read"] == 0
+
+
 def test_build_manifest_reverse_geocode_no_stac(tmp_path, monkeypatch):
     from loam import catalog, plan
 

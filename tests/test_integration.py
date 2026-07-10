@@ -192,3 +192,15 @@ def test_reverse_geocode_nominatim_live():
     assert enr[0]["geo_cc"] == "US"
     assert enr[0]["geo_address"]                 # a full display_name resolved
     assert enr[0]["geo_admin1"]                  # state populated
+
+
+def test_map_match_osrm_live():
+    """Map-match a short real trace via the public OSRM demo → a matched LineString."""
+    from loam import vector
+
+    # a few points along roads in Berlin (OSRM demo is car routing over OSM)
+    trace = [(52.517, 13.389), (52.517, 13.391), (52.516, 13.393), (52.516, 13.395)]
+    m = vector.map_match(trace, backend="osrm")
+    assert m["geometry"]["type"] == "LineString"
+    assert len(m["geometry"]["coordinates"]) >= 2
+    assert m["match_confidence"] is not None
