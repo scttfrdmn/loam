@@ -48,11 +48,13 @@ def _cmd_collections(args: argparse.Namespace) -> int:
 def _cmd_plan(args: argparse.Namespace) -> int:
     from .plan import build_manifest, write_manifest
 
-    # --format defaults to cog (raster); a row op needs a row format. Default it to csv unless the
-    # user picked a row format explicitly.
+    # --format defaults to cog (raster); a row op needs a row format. Default reverse-geocode to
+    # csv and zonal-stats to geojson (zones carry geometry) unless the user picked a row format.
     fmt = args.format
     if args.op == "reverse-geocode" and fmt not in ("csv", "geojson"):
         fmt = "csv"
+    elif args.op == "zonal-stats" and fmt not in ("csv", "geojson"):
+        fmt = "geojson"
 
     manifest = build_manifest(
         op=args.op,
@@ -78,6 +80,9 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         lat_field=args.lat_field,
         lon_field=args.lon_field,
         backend=args.backend,
+        zones_uri=args.zones,
+        raster_uri=args.raster,
+        stats=args.stat.split(",") if args.stat else None,
     )
     write_manifest(manifest, args.manifest, region=args.region)
     print(
@@ -197,7 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("plan", help="search + shard into a manifest")
     pp.add_argument("--op", required=True,
                     choices=["band-math", "cloud-mask", "resample", "temporal-composite",
-                             "reverse-geocode"])
+                             "reverse-geocode", "zonal-stats"])
     pp.add_argument("--collection", default="sentinel-2")
     # AOI/date range are required for raster ops; row ops (reverse-geocode) use --input instead.
     # build_manifest validates per-op.
@@ -225,6 +230,12 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--backend", choices=["offline", "nominatim"], default="offline",
                     help="reverse-geocode backend: offline (city/admin, default) or nominatim "
                          "(online, street-level, ≤1 req/s)")
+    pp.add_argument("--zones", default=None,
+                    help="GeoJSON of polygon zones (zonal-stats)")
+    pp.add_argument("--raster", default=None,
+                    help="single-band COG to summarize, e.g. a band-math output (zonal-stats)")
+    pp.add_argument("--stat", default="mean,min,max,count",
+                    help="comma list: mean,min,max,sum,median,std,count,pNN (zonal-stats)")
     pp.add_argument("--max-cloud", type=float, default=None)
     pp.add_argument("--shard-size", type=int, default=50)
     pp.add_argument("--limit", type=int, default=None)

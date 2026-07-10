@@ -12,7 +12,7 @@ This page is the honest scorecard: what loam covers, what it doesn't yet, and wh
 > **TL;DR** — For the actual work people ran on SageMaker Geospatial (spectral indices, cloud
 > masking, cloud-free composites over Sentinel-2, resampling, reverse-geocoding), **loam is a
 > complete replacement today** — running in any region, in a fresh account, with no runtime cap,
-> spot-priced, and observable. The remaining op gaps are **zonal statistics** and **map-match**.
+> spot-priced, and observable. The remaining op gap is **map-match**.
 
 ## SageMaker Geospatial was three surfaces
 
@@ -34,7 +34,7 @@ It fused three things. loam relates to each differently:
 | Geomosaic | same op (the composite *is* the mosaic) | ✅ parity |
 | Resampling / reprojection | `--op resample` (reproject + regrid, rasterio.warp) | ✅ parity |
 | Stacking | over *time* via composite; no arbitrary multi-band stack op | ⚠️ partial |
-| **Zonal statistics** | — | ❌ planned ([#34](https://github.com/scttfrdmn/loam/issues/34)) |
+| **Zonal statistics** | `--op zonal-stats` (per-zone stats over an existing raster COG + polygon zones) | ✅ parity |
 | Export to S3 | native — every shard writes (Cloud-Optimized) GeoTIFF to S3 | ✅ parity |
 
 ## 2. Vector Enrichment Jobs
@@ -79,9 +79,9 @@ good" — and it adds things SM never had:
 
 ## Honest remaining gaps
 
-On **operations**: **zonal statistics** ([#34](https://github.com/scttfrdmn/loam/issues/34)) is the
-clearest unmet EOJ parity item; **map-match** ([#30](https://github.com/scttfrdmn/loam/issues/30))
-is the one unmet VEJ item; arbitrary multi-band stacking is only partial.
+On **operations**: **map-match** ([#30](https://github.com/scttfrdmn/loam/issues/30)) is the one
+unmet VEJ item; arbitrary multi-band stacking is only partial. (Zonal statistics and reverse-geocode
+are now covered.)
 
 On the **product surface**: the Studio **map viewer**
 ([#10](https://github.com/scttfrdmn/loam/issues/10)) has no equivalent yet, and a **boto3-compat

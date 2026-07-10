@@ -131,6 +131,24 @@ def _enrich_rows(
     return uri, len(out_text.encode("utf-8"))
 
 
+def _zonal_shard(
+    output_uri: str, index: int, scene: Scene, params: dict, *, region: str | None
+) -> tuple[str, int]:
+    """Compute per-zone stats for one chunk of polygons against the manifest's raster COG."""
+    from . import vector, zonal
+
+    fmt = params.get("format", "geojson")
+    raster = params["raster"]
+    stats = params["stats"]
+    text = state.get_text(scene.assets["zones"], region=region)
+    zones = vector.read_polygons(text)
+    enrich = [zonal.zonal_stats(raster, z.get("geometry") or {}, stats) for z in zones]
+    out_text = vector.write_enriched(zones, enrich, fmt)
+    uri = state.output_uri_for(output_uri, index, f"{scene.id}__zonalstats.{fmt}")
+    state.put_text(uri, out_text, region=region)
+    return uri, len(out_text.encode("utf-8"))
+
+
 def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force: bool = False) -> dict:
     """Run a single shard. Returns a small summary dict (also useful for tests)."""
     manifest = Manifest.from_json(state.get_text(manifest_uri, region=region))
@@ -150,6 +168,18 @@ def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force
         for scene in scenes:
             try:
                 uri, nbytes = _enrich_rows(
+                    manifest.output_uri, index, scene, manifest.params, region=region
+                )
+            except Exception as e:  # a bad chunk must not sink the shard; record and continue
+                failed.append({"scene": scene.id, "error": str(e)})
+                continue
+            written.append(uri)
+            bytes_written += nbytes
+    elif manifest.op == "zonal-stats":
+        # Row×raster op: reduce the manifest's raster within each chunk's zones → one file/chunk.
+        for scene in scenes:
+            try:
+                uri, nbytes = _zonal_shard(
                     manifest.output_uri, index, scene, manifest.params, region=region
                 )
             except Exception as e:  # a bad chunk must not sink the shard; record and continue

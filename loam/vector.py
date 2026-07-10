@@ -168,6 +168,22 @@ def read_points(
     raise ValueError(f"unsupported vector format {fmt!r} (use csv or geojson)")
 
 
+def read_polygons(text: str) -> list[dict[str, Any]]:
+    """Parse a GeoJSON FeatureCollection of Polygon/MultiPolygon zones → list of features.
+
+    Each feature keeps its ``geometry`` (used by ``zonal.zonal_stats``) and ``properties`` (carried
+    through to the output). Rejects non-polygon geometries — zonal statistics needs areas, not
+    points/lines.
+    """
+    doc = json.loads(text)
+    feats = doc.get("features", [])
+    for f in feats:
+        gtype = (f.get("geometry") or {}).get("type")
+        if gtype not in ("Polygon", "MultiPolygon"):
+            raise ValueError(f"zonal-stats zones must be Polygon/MultiPolygon features, got {gtype!r}")
+    return feats
+
+
 def write_chunk(rows: list[dict[str, Any]], fmt: str) -> str:
     """Serialize rows as-is (no enrichment) — used to persist input chunks for run-shard."""
     return write_enriched(rows, [{} for _ in rows], fmt)
