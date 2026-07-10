@@ -40,6 +40,7 @@ def build_manifest(
     rows_per_shard: int = 5000,
     lat_field: str | None = None,
     lon_field: str | None = None,
+    backend: str = "offline",
 ) -> Manifest:
     """Search, shard, and assemble a Manifest (does not write it — caller persists).
 
@@ -52,6 +53,7 @@ def build_manifest(
         return _build_vector_manifest(
             op=op, output_uri=output_uri, input_uri=input_uri, fmt=fmt,
             rows_per_shard=rows_per_shard, lat_field=lat_field, lon_field=lon_field,
+            backend=backend,
         )
 
     # Raster ops require a search footprint + date range.
@@ -146,6 +148,7 @@ def build_manifest(
 def _build_vector_manifest(
     *, op: str, output_uri: str, input_uri: str | None, fmt: str,
     rows_per_shard: int, lat_field: str | None, lon_field: str | None,
+    backend: str = "offline",
     region: str | None = None,
 ) -> Manifest:
     """Build a manifest for a row op: read a points file, chunk rows into shards.
@@ -163,6 +166,8 @@ def _build_vector_manifest(
         raise ValueError(f"{op} requires --format csv or geojson (got {fmt!r})")
     if rows_per_shard < 1:
         raise ValueError("--rows-per-shard must be >= 1")
+    if backend not in vector._BACKENDS:
+        raise ValueError(f"unknown backend {backend!r}; known: {', '.join(vector._BACKENDS)}")
 
     text = state.get_text(input_uri, region=region)
     rows, _ = vector.read_points(text, fmt, lat_field=lat_field, lon_field=lon_field)
@@ -177,7 +182,7 @@ def _build_vector_manifest(
         scenes.append(Scene(id=cid, datetime="", assets={"rows": chunk_uri}))
 
     params = {
-        "format": fmt, "lat_field": lat_field, "lon_field": lon_field, "backend": "offline",
+        "format": fmt, "lat_field": lat_field, "lon_field": lon_field, "backend": backend,
     }
     shards = shard_scenes(scenes, 1)  # one row-chunk per shard (the chunk already sized the work)
     return Manifest(

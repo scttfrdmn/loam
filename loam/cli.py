@@ -77,6 +77,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         rows_per_shard=args.rows_per_shard,
         lat_field=args.lat_field,
         lon_field=args.lon_field,
+        backend=args.backend,
     )
     write_manifest(manifest, args.manifest, region=args.region)
     print(
@@ -221,6 +222,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="CSV latitude column (reverse-geocode; default auto-detect)")
     pp.add_argument("--lon-field", dest="lon_field", default=None,
                     help="CSV longitude column (reverse-geocode; default auto-detect)")
+    pp.add_argument("--backend", choices=["offline", "nominatim"], default="offline",
+                    help="reverse-geocode backend: offline (city/admin, default) or nominatim "
+                         "(online, street-level, ≤1 req/s)")
     pp.add_argument("--max-cloud", type=float, default=None)
     pp.add_argument("--shard-size", type=int, default=50)
     pp.add_argument("--limit", type=int, default=None)

@@ -182,3 +182,13 @@ def test_end_to_end_temporal_composite_over_real_cogs(tmp_path):
     finite = data[np.isfinite(data)]
     assert finite.size > 0
     assert finite.min() >= -1.0001 and finite.max() <= 1.0001  # plausible NDVI
+
+
+def test_reverse_geocode_nominatim_live():
+    """Hit the real Nominatim API once (polite: 1 request, real User-Agent) → street-level fields."""
+    from loam import vector
+
+    enr = vector.reverse_geocode([(40.7484, -73.9857)], backend="nominatim")  # Empire State Bldg
+    assert enr[0]["geo_cc"] == "US"
+    assert enr[0]["geo_address"]                 # a full display_name resolved
+    assert enr[0]["geo_admin1"]                  # state populated
