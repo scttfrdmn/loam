@@ -802,3 +802,52 @@ def test_status_detail_survives_malformed_checkpoint(tmp_path):
     st = plan.status(manifest_uri, detail=True)
     assert st["shards_done"] == 1          # checkpoint exists → counts as done
     assert st["ledger"]["shards"] == []    # but contributes no ledger row
+
+
+# ── dispatch (the runner seam) — prints commands, never executes (#8) ────────
+
+def _dispatch_manifest(tmp_path):
+    out = str(tmp_path / "out")
+    scenes = [Scene(id=f"s{i}", datetime="2023-01-01", assets={"nir": "n", "red": "r"})
+              for i in range(5)]
+    m = Manifest(
+        version=MANIFEST_VERSION, op="band-math",
+        params={"indices": ["NDVI"], "format": "cog", "target_res": 100.0},
+        collection="sentinel-2-l2a", aoi=[0, 0, 1, 1], output_uri=out, scenes=scenes,
+    )
+    m.shards = shard_scenes(scenes, 2)  # 3 shards
+    from loam import shape
+    for sh in m.shards:
+        sh.shape = shape.shape_for("band-math", m.params, len(sh.scene_ids), "sentinel-2-l2a")
+    mu = str(tmp_path / "m.json")
+    from loam import state
+    state.put_text(mu, m.to_json())
+    return mu
+
+
+@pytest.mark.parametrize("runner,needle", [
+    ("local", "for i in $(seq 0 2)"),
+    ("spawn", "spawn launch loam-00000"),
+    ("lagotto", "lagotto watch"),
+])
+def test_dispatch_prints_runner_commands(tmp_path, capsys, runner, needle):
+    from loam import cli
+    mu = _dispatch_manifest(tmp_path)
+    rc = cli.main(["dispatch", "--manifest", mu, "--runner", runner])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert needle in out
+    # every form ultimately runs the same idempotent atom
+    assert "loam run-shard --manifest" in out
+
+
+def test_dispatch_lagotto_emits_pool_fleet(tmp_path, capsys):
+    from loam import cli
+    mu = _dispatch_manifest(tmp_path)
+    cli.main(["dispatch", "--manifest", mu, "--runner", "lagotto", "--instance", "r7i.2xlarge"])
+    out = capsys.readouterr().out
+    assert "loam-fleet.yaml" in out                    # generates a spawn-config
+    assert "-i $SHARD" in out                            # fleet pulls shards from the pool
+    assert "--shards 0-2" in out                         # across the manifest's shard range
+    assert "r7i.2xlarge" in out                          # honors --instance
+    assert "poll --daemon" in out

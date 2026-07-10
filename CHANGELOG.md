@@ -6,6 +6,16 @@ versions follow semver.
 ## [Unreleased]
 
 ### Added
+- **Runner integration: `loam dispatch --runner lagotto`** (closes #8): emits a capacity-watch
+  fleet — a generated spawn-config whose command pulls shards from the pool + `lagotto watch`
+  /`poll` lines — so a scarce-capacity fleet drains the manifest (spot reclaim is a non-event).
+  Still prints only; loam calls nothing. (Dispatch also gains its first tests, covering all three
+  runners.)
+- **nf-spawn Nextflow example** (closes #7): `examples/nextflow/loam.nf` + README fan `run-shard`
+  over shards on ephemeral EC2 — proving the contract with **zero loam code change**.
+- **`docs/MIGRATION.md`** — a hands-on SageMaker Geospatial → loam transition guide: EOJ-config →
+  loam-CLI mapping table, boto3 before/after, status/export differences, and a pointer to the
+  planned compat shim (#9). Linked from README and PARITY.
 - **`docs/PARITY.md`** — a SageMaker Geospatial parity matrix (EOJ / VEJ / executor + viewer),
   what loam covers vs. deliberately does differently, and the honest remaining gaps. Linked from
   the README and DESIGN. Filed the clearest unmet op gap: zonal statistics (#34).
