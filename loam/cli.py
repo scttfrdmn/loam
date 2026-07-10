@@ -7,7 +7,7 @@ Verbs mirror the spore.host house style (truffle's read verbs; a single work ato
     loam plan      --op ... --aoi ... build a manifest (search + shard), write to S3/local
     loam run-shard --manifest U -i N  run ONE shard (the executor-agnostic atom)
     loam status    --manifest U       progress, derived from S3
-    loam dispatch  --manifest U       print the runner commands (spawn/nf-spawn) — never runs them
+    loam dispatch  --manifest U       print the runner commands (local/spawn/lagotto) — never runs them
 
 The CLI provisions nothing. ``dispatch`` only PRINTS how to hand shards to a runner, keeping
 loam execution-agnostic: it shows you the spawn command, it does not call spawn.
@@ -153,6 +153,33 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
                 f"--on-complete terminate --iam-policy s3:ReadWrite "
                 f"--command 'loam run-shard --manifest {args.manifest} -i {i}'"
             )
+    elif args.runner == "lagotto":
+        # Capacity-watch fleet: shards are a POOL, so lagotto watches for scarce capacity and
+        # launches a fleet that DRAINS the manifest (not one box per shard). Spot reclaim is a
+        # non-event — a reclaimed shard is just re-run (idempotent). loam only PRINTS this; it
+        # never calls lagotto.
+        from .shape import human_bytes
+
+        total_peak = max((sh.shape["peak_rss_bytes"] for sh in manifest.shards if sh.shape),
+                         default=0)
+        print(f"# {n} shards as a pool — lagotto watches capacity, launches a fleet that drains it.")
+        if total_peak:
+            print(f"# right-size for ~{human_bytes(total_peak)} peak RAM/shard (est).")
+        print("# 1) a spawn-config whose command pulls the next shard index ($SHARD) from the pool:")
+        print("cat > loam-fleet.yaml <<'YAML'")
+        print(f"instance_type: {args.instance}")
+        print("spot: true")
+        print("on_complete: terminate          # spawn#262")
+        print("iam_policy: s3:ReadWrite")
+        print(f"command: loam run-shard --manifest {args.manifest} -i $SHARD")
+        print("YAML")
+        print(f"# 2) watch for capacity and launch the fleet across shards 0..{n - 1}:")
+        print(
+            f"lagotto watch --instance-type {args.instance} --action spawn "
+            f"--spawn-config loam-fleet.yaml --shards 0-{n - 1}"
+        )
+        print("# 3) run the poller (local-daemon caveat: lagotto#48):")
+        print("lagotto poll --daemon")
     return 0
 
 
@@ -226,7 +253,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pd = sub.add_parser("dispatch", help="print runner commands for every shard (does not run)")
     pd.add_argument("--manifest", required=True)
-    pd.add_argument("--runner", choices=["local", "spawn"], default="spawn")
+    pd.add_argument("--runner", choices=["local", "spawn", "lagotto"], default="spawn")
     pd.add_argument("--instance", default="m8g.4xlarge")
     pd.add_argument("--region", default=None)
     pd.set_defaults(func=_cmd_dispatch)

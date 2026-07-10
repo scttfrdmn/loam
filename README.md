@@ -135,11 +135,12 @@ equations), resample/reproject, temporal composites/geomosaics, and reverse-geoc
 estimates, an `loam status --detail` job ledger, and `spawn`/local dispatch. loam now covers the
 operations half of SageMaker Geospatial's EOJ **and** VEJ.
 
-**How complete a replacement is it?** See **[docs/PARITY.md](docs/PARITY.md)** — the full
-SageMaker Geospatial parity matrix and what loam deliberately does differently. Short version:
-the operations people actually ran are covered; the honest remaining gaps are zonal statistics and
-map-match. Roadmap: runner integrations (nf-spawn, lagotto), those gap ops, an arm64/Graviton
-container, and a `titiler`/`leafmap` viewer.
+**Coming from SageMaker Geospatial?** See **[docs/MIGRATION.md](docs/MIGRATION.md)** — a hands-on
+EOJ-config → loam-CLI mapping with before/after code. And **[docs/PARITY.md](docs/PARITY.md)** for
+the full parity matrix and what loam deliberately does differently: the operations people actually
+ran are covered; the honest remaining gaps are zonal statistics and map-match. Roadmap: runner
+integrations (nf-spawn, lagotto), those gap ops, an arm64/Graviton container, and a
+`titiler`/`leafmap` viewer.
 
 ## Contributing
 

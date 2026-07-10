@@ -6,7 +6,8 @@ cloning it, but by keeping the part that had value (the **operations**) and disc
 that was the liability (the **managed executor**).
 
 This page is the honest scorecard: what loam covers, what it doesn't yet, and what it
-**deliberately** does differently.
+**deliberately** does differently. Ready to port a workflow? See
+[MIGRATION.md](MIGRATION.md) for the EOJ-config → loam-CLI mapping and before/after code.
 
 > **TL;DR** — For the actual work people ran on SageMaker Geospatial (spectral indices, cloud
 > masking, cloud-free composites over Sentinel-2, resampling, reverse-geocoding), **loam is a
