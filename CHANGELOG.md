@@ -5,6 +5,11 @@ versions follow semver.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-10
+
+More ops: closes the last raster parity gap (zonal statistics) and adds an online street-level
+reverse-geocode backend. Only map-match (#30) remains of SageMaker Geospatial's operation set.
+
 ### Added
 - **Zonal statistics op** (closes #34): `loam plan --op zonal-stats --zones zones.geojson --raster
   ndvi.tif --stat mean,min,max,count,p90` aggregates an existing single-band raster COG within
