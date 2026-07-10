@@ -470,7 +470,7 @@ def test_vector_errors():
     with pytest.raises(ValueError, match="unsupported vector format"):
         vector.read_points("x", "parquet")
     with pytest.raises(ValueError, match="unknown backend"):
-        vector.reverse_geocode([(0.0, 0.0)], backend="nominatim")
+        vector.reverse_geocode([(0.0, 0.0)], backend="nope")
 
 
 def test_reverse_geocode_offline_backend():
@@ -479,6 +479,50 @@ def test_reverse_geocode_offline_backend():
     enr = vector.reverse_geocode([(40.7, -74.0)])  # NYC
     assert enr[0]["geo_cc"] == "US"
     assert enr[0]["geo_name"]  # a place name resolved
+    assert "geo_address" in enr[0]  # schema includes the field (empty for offline)
+
+
+def test_reverse_geocode_nominatim_backend_mocked(monkeypatch):
+    # Nominatim backend maps the OSM response to geo_* fields — HTTP mocked, no network, no sleep.
+    import json as _json
+    from loam import vector
+
+    canned = {
+        "display_name": "Empire State Building, 350, 5th Avenue, Manhattan, New York, US",
+        "address": {"tourism": "Empire State Building", "city": "New York",
+                    "county": "New York County", "state": "New York", "country_code": "us"},
+    }
+
+    class _FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return _json.dumps(canned).encode("utf-8")
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=30: _FakeResp())
+    monkeypatch.setattr(vector, "_NOMINATIM_MIN_INTERVAL_S", 0)  # no real sleep in tests
+
+    enr = vector.reverse_geocode([(40.748, -73.985), (40.75, -73.99)], backend="nominatim")
+    assert len(enr) == 2
+    assert enr[0]["geo_cc"] == "US"            # uppercased from country_code
+    assert enr[0]["geo_admin1"] == "New York"  # state
+    assert enr[0]["geo_name"] == "New York"    # city
+    assert "Empire State" in enr[0]["geo_address"]
+
+
+def test_build_manifest_reverse_geocode_backend_validated(tmp_path, monkeypatch):
+    from loam import catalog, plan
+    monkeypatch.setattr(catalog, "search", lambda **kw: [])
+    csv_path = tmp_path / "pts.csv"
+    csv_path.write_text("lat,lon\n40.7,-74.0\n")
+    # an unknown backend fails at plan time
+    with pytest.raises(ValueError, match="unknown backend"):
+        plan.build_manifest(op="reverse-geocode", output_uri=str(tmp_path / "o"),
+                            input_uri=str(csv_path), fmt="csv", backend="bogus")
+    # nominatim is accepted and threaded into params
+    m = plan.build_manifest(op="reverse-geocode", output_uri=str(tmp_path / "o"),
+                            input_uri=str(csv_path), fmt="csv", backend="nominatim")
+    assert m.params["backend"] == "nominatim"
 
 
 def test_build_manifest_reverse_geocode_no_stac(tmp_path, monkeypatch):

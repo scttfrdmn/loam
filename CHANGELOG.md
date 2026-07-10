@@ -5,6 +5,14 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Added
+- **Online Nominatim reverse-geocode backend** (closes #31): `loam plan --op reverse-geocode
+  --backend nominatim` resolves street-level addresses via the OpenStreetMap Nominatim API
+  (stdlib `urllib`, no new dep), adding a `geo_address` field. Respects the usage policy (real
+  User-Agent, ≤1 req/s); endpoint overridable for a self-hosted instance. `offline` stays the
+  default so the hermetic contract holds; the backend registry (`vector._BACKENDS`) made this a
+  drop-in.
+
 ## [0.3.0] — 2026-07-09
 
 Runner integrations + migration docs: loam now emits capacity-watch fleets and runs under
