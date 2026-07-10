@@ -1,18 +1,21 @@
 """Vector enrichment — the row-oriented (VEJ) half of SageMaker Geospatial.
 
-loam's raster ops read COGs; this reads a table of points. ``reverse-geocode`` takes a CSV or
-GeoJSON of lat/lon points and appends place attributes (name / admin1 / admin2 / country). It is
-the first non-raster op, but rides the same manifest/shard machinery: ``plan`` chunks the input
-rows into shards, and ``run-shard`` enriches one chunk (see ``loam.plan`` / ``loam.run``).
+loam's raster ops read COGs; this reads tables of points. It provides the VEJ operations:
+  * ``reverse-geocode`` — points → place attributes (offline GeoNames, or online Nominatim).
+  * ``map-match`` — GPS traces (ordered points grouped by a trace id) → matched road geometry +
+    edge/way ids, via a routing service (Valhalla by default, or OSRM).
 
-This module is pure content — parse points, look them up, write enriched rows. It knows nothing
-about S3, shards, or runners (mirrors ``loam.ops``), and imports no raster stack, so it stays
-cheap and independently testable.
+All are non-raster but ride the same manifest/shard machinery: ``plan`` chunks the input into
+shards, ``run-shard`` processes one chunk (see ``loam.plan`` / ``loam.run``).
 
-Backend: an OFFLINE reverse geocoder (GeoNames KD-tree) — deterministic, network-free, spot-safe,
-and CI-testable, matching loam's execution-agnostic values. It is an optional dependency
-(``pip install loam-geo[vector]``). The backend is pluggable (``_BACKENDS``) so an online option
-(e.g. Nominatim, street-level) can be added later without changing callers.
+This module is pure content — parse, look up / match, write results. It knows nothing about S3,
+shards, or runners (mirrors ``loam.ops``), and imports no raster stack, so it stays cheap and
+independently testable. Online backends (Nominatim, Valhalla, OSRM) use stdlib ``urllib`` and call
+a *data* HTTP service — never a compute provisioner, so the execution-agnostic contract holds.
+
+Backends are pluggable: ``_BACKENDS`` for reverse-geocode, ``_MATCH_BACKENDS`` for map-match. The
+default reverse-geocode backend is OFFLINE (deterministic, network-free) via the optional
+``pip install loam-geo[vector]`` extra.
 """
 
 from __future__ import annotations
@@ -211,3 +214,161 @@ def write_enriched(rows: list[dict[str, Any]], enrich: list[dict[str, str]], fmt
             out_feats.append(merged)
         return json.dumps({"type": "FeatureCollection", "features": out_feats}, indent=2)
     raise ValueError(f"unsupported vector format {fmt!r} (use csv or geojson)")
+
+
+# ── map-match: snap ordered GPS traces to roads (the second VEJ half) ─────────
+
+# Routing service endpoints — overridable module constants (point at a self-hosted instance).
+VALHALLA_URL = "https://valhalla1.openstreetmap.de"      # community demo; self-host for volume
+OSRM_URL = "https://router.project-osrm.org"             # public demo; ~100-coord/req cap
+
+# Rate-limit spacing between routing requests (polite to shared/demo servers).
+_MATCH_MIN_INTERVAL_S = 1.0
+
+# Stable output-property schema (like GEO_FIELDS). A backend that can't fill one emits None.
+MATCH_FIELDS = ["match_trace_id", "match_confidence", "match_way_ids", "match_names",
+                "match_point_count"]
+
+_TRACE_ALIASES = ("trace_id", "trace", "track_id", "id")
+
+
+def read_trace_points(
+    text: str, fmt: str, *, trace_field: str | None = "trace_id",
+    lat_field: str | None = None, lon_field: str | None = None,
+) -> dict[str, list[tuple[float, float]]]:
+    """Parse points and GROUP them into ordered traces by ``trace_field``.
+
+    Returns an insertion-ordered ``{trace_id: [(lat, lon), ...]}`` — deterministic, and within a
+    trace the points keep input order (the GPS sequence). If ``trace_field`` is None, the whole file
+    is one trace (id ``"trace"``). If ``trace_field`` is set but absent from the data, raises (a
+    silent one-giant-trace fallback would corrupt results by matching unrelated logs as one path).
+    """
+    rows, coords = read_points(text, fmt, lat_field=lat_field, lon_field=lon_field)
+    traces: dict[str, list[tuple[float, float]]] = {}
+    if trace_field is None:
+        traces["trace"] = coords
+        return traces
+    for row, coord in zip(rows, coords):
+        props = row.get("properties", row) if fmt == "geojson" else row
+        if trace_field not in props:
+            raise ValueError(f"trace field {trace_field!r} not found in the input")
+        traces.setdefault(str(props[trace_field]), []).append(coord)
+    return traces
+
+
+def _decode_polyline6(encoded: str) -> list[list[float]]:
+    """Decode a Google-encoded polyline at precision 1e-6 → list of [lon, lat] (GeoJSON order).
+
+    Valhalla's ``trace_attributes`` returns geometry as a precision-6 encoded polyline. Standard
+    algorithm, pure stdlib. Precision 6 is hard-coded (Valhalla's default; documented assumption).
+    """
+    coords: list[list[float]] = []
+    index = lat = lon = 0
+    while index < len(encoded):
+        for is_lon in (False, True):
+            shift = result = 0
+            while True:
+                b = ord(encoded[index]) - 63
+                index += 1
+                result |= (b & 0x1F) << shift
+                shift += 5
+                if b < 0x20:
+                    break
+            delta = ~(result >> 1) if (result & 1) else (result >> 1)
+            if is_lon:
+                lon += delta
+            else:
+                lat += delta
+        coords.append([lon / 1e6, lat / 1e6])
+    return coords
+
+
+def _valhalla_backend(coords: list[tuple[float, float]]) -> dict[str, Any]:
+    """Map-match one trace via Valhalla ``/trace_attributes`` — geometry + edge/way ids."""
+    import urllib.request
+
+    from . import __version__
+
+    body = json.dumps({
+        "shape": [{"lat": lat, "lon": lon} for lat, lon in coords],
+        "costing": "auto",
+        "shape_match": "map_snap",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{VALHALLA_URL}/trace_attributes", data=body,
+        headers={"User-Agent": f"loam-geo/{__version__} (https://github.com/scttfrdmn/loam)",
+                 "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 - fixed https endpoint
+        data = json.loads(resp.read().decode("utf-8"))
+    edges = data.get("edges", [])
+    way_ids = [e["way_id"] for e in edges if e.get("way_id") is not None]
+    names = sorted({n for e in edges for n in e.get("names", [])})
+    line = _decode_polyline6(data["shape"]) if data.get("shape") else []
+    return {
+        "geometry": {"type": "LineString", "coordinates": line},
+        "match_confidence": None,          # Valhalla trace_attributes has no single confidence
+        "match_way_ids": way_ids,
+        "match_names": names,
+    }
+
+
+def _osrm_backend(coords: list[tuple[float, float]]) -> dict[str, Any]:
+    """Map-match one trace via OSRM ``/match`` — GeoJSON geometry + confidence."""
+    import urllib.request
+
+    from . import __version__
+
+    path = ";".join(f"{lon},{lat}" for lat, lon in coords)  # OSRM wants lon,lat
+    url = f"{OSRM_URL}/match/v1/driving/{path}?geometries=geojson&overview=full"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": f"loam-geo/{__version__} (https://github.com/scttfrdmn/loam)"},
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 - fixed https endpoint
+        data = json.loads(resp.read().decode("utf-8"))
+    matchings = data.get("matchings") or []
+    if not matchings:
+        raise ValueError("OSRM returned no matching for the trace")
+    m = matchings[0]
+    return {
+        "geometry": m.get("geometry") or {"type": "LineString", "coordinates": []},
+        "match_confidence": m.get("confidence"),
+        "match_way_ids": [],               # OSRM /match doesn't return OSM way ids by default
+        "match_names": [],
+    }
+
+
+# Pluggable map-match backends — separate registry from _BACKENDS (different signature: one
+# trace's ordered coords → one match dict with geometry). Valhalla is the default (tiled/arm64 fit,
+# edge/way-id output); OSRM is the alternative (faster pure-snap, existing-instance users).
+_MATCH_BACKENDS: dict[str, Callable[[list[tuple[float, float]]], dict[str, Any]]] = {
+    "valhalla": _valhalla_backend,
+    "osrm": _osrm_backend,
+}
+
+
+def map_match(coords: list[tuple[float, float]], *, backend: str = "valhalla") -> dict[str, Any]:
+    """Match one ordered trace to roads. Returns {geometry, match_confidence, match_way_ids, ...}."""
+    if backend not in _MATCH_BACKENDS:
+        raise ValueError(f"unknown map-match backend {backend!r}; known: {', '.join(_MATCH_BACKENDS)}")
+    return _MATCH_BACKENDS[backend](coords)
+
+
+def write_matched(matches: list[tuple[str, dict[str, Any]]]) -> str:
+    """Serialize matched traces as a GeoJSON FeatureCollection — one LineString Feature per trace.
+
+    ``matches`` is a list of (trace_id, match_dict). The match dict's ``geometry`` becomes the
+    feature geometry; its MATCH_FIELDS go to properties (missing → None, JSON-safe).
+    """
+    feats = []
+    for trace_id, m in matches:
+        props = {
+            "match_trace_id": trace_id,
+            "match_confidence": m.get("match_confidence"),
+            "match_way_ids": m.get("match_way_ids"),
+            "match_names": m.get("match_names"),
+            "match_point_count": len((m.get("geometry") or {}).get("coordinates", [])),
+        }
+        feats.append({"type": "Feature", "properties": props,
+                      "geometry": m.get("geometry")})
+    return json.dumps({"type": "FeatureCollection", "features": feats}, indent=2)

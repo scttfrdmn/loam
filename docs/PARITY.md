@@ -12,14 +12,15 @@ This page is the honest scorecard: what loam covers, what it doesn't yet, and wh
 > **TL;DR** — For the actual work people ran on SageMaker Geospatial (spectral indices, cloud
 > masking, cloud-free composites over Sentinel-2, resampling, reverse-geocoding), **loam is a
 > complete replacement today** — running in any region, in a fresh account, with no runtime cap,
-> spot-priced, and observable. The remaining op gap is **map-match**.
+> spot-priced, and observable. **Every SageMaker Geospatial operation loam set out to cover is now
+> shipped** — no remaining op gaps.
 
 ## SageMaker Geospatial was three surfaces
 
 It fused three things. loam relates to each differently:
 
 1. **Earth Observation Jobs (EOJ)** — the raster operations. *loam is at parity here.*
-2. **Vector Enrichment Jobs (VEJ)** — reverse-geocode + map-match. *loam covers reverse-geocode.*
+2. **Vector Enrichment Jobs (VEJ)** — reverse-geocode + map-match. *loam covers both.*
 3. **The managed executor + Studio map viewer.** *loam deliberately does not reproduce the
    executor* — that was the worst part — and the viewer is future work.
 
@@ -42,7 +43,7 @@ It fused three things. loam relates to each differently:
 | SageMaker Geospatial operation | loam | Status |
 |---|---|---|
 | Reverse geocoding | `--op reverse-geocode` (offline city/admin-level, or `--backend nominatim` for online street-level; CSV + GeoJSON) | ✅ parity |
-| Map matching (GPS → roads) | — | ❌ planned ([#30](https://github.com/scttfrdmn/loam/issues/30)) |
+| Map matching (GPS → roads) | `--op map-match` (Valhalla default / OSRM; matched geometry + way ids) | ✅ parity |
 
 ## 3. The executor and the viewer
 
@@ -79,9 +80,9 @@ good" — and it adds things SM never had:
 
 ## Honest remaining gaps
 
-On **operations**: **map-match** ([#30](https://github.com/scttfrdmn/loam/issues/30)) is the one
-unmet VEJ item; arbitrary multi-band stacking is only partial. (Zonal statistics and reverse-geocode
-are now covered.)
+On **operations**: **none** — every SageMaker Geospatial EOJ and VEJ operation is now covered
+(cloud-mask, band-math, temporal-composite, resample, zonal-stats; reverse-geocode, map-match).
+Arbitrary multi-band stacking is only partial.
 
 On the **product surface**: the Studio **map viewer**
 ([#10](https://github.com/scttfrdmn/loam/issues/10)) has no equivalent yet, and a **boto3-compat

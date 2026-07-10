@@ -5,6 +5,16 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Added
+- **Map-match op** (closes #30): `loam plan --op map-match --input traces.csv [--backend valhalla|osrm]`
+  snaps ordered GPS traces (grouped by `--trace-field`) to the road network, emitting one matched
+  GeoJSON LineString per trace with edge/way ids + confidence. Pluggable `_MATCH_BACKENDS`:
+  **Valhalla** default (`/trace_attributes`; tiled/arm64-friendly, way-id output; a ~15-line
+  stdlib polyline6 decoder yields the geometry) and **OSRM** alternative (`/match`). Sharding unit
+  is a whole trace (never split); over-long traces (`--max-trace-points`) are recorded in `failed`,
+  not fatal. stdlib `urllib`, **no new dependency**. This is the **last SageMaker Geospatial
+  operation** — EOJ + VEJ parity is now complete (see docs/PARITY.md).
+
 ## [0.4.0] — 2026-07-10
 
 More ops: closes the last raster parity gap (zonal statistics) and adds an online street-level

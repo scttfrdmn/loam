@@ -45,6 +45,10 @@ def build_manifest(
     zones_uri: str | None = None,
     raster_uri: str | None = None,
     stats: list[str] | None = None,
+    # map-match — snap GPS traces to roads
+    trace_field: str | None = "trace_id",
+    traces_per_shard: int = 200,
+    max_trace_points: int = 100,
 ) -> Manifest:
     """Search, shard, and assemble a Manifest (does not write it — caller persists).
 
@@ -63,6 +67,12 @@ def build_manifest(
         return _build_zonal_manifest(
             output_uri=output_uri, zones_uri=zones_uri, raster_uri=raster_uri,
             stats=stats, fmt=fmt, rows_per_shard=rows_per_shard,
+        )
+    if op == "map-match":
+        return _build_matchtrace_manifest(
+            output_uri=output_uri, input_uri=input_uri, fmt=fmt, backend=backend,
+            trace_field=trace_field, lat_field=lat_field, lon_field=lon_field,
+            traces_per_shard=traces_per_shard, max_trace_points=max_trace_points,
         )
 
     # Raster ops require a search footprint + date range.
@@ -241,6 +251,63 @@ def _build_zonal_manifest(
     shards = shard_scenes(scenes, 1)
     return Manifest(
         version=MANIFEST_VERSION, op="zonal-stats", params=params, collection="vector", aoi=[],
+        output_uri=output_uri, scenes=scenes, shards=shards,
+    )
+
+
+def _build_matchtrace_manifest(
+    *, output_uri: str, input_uri: str | None, fmt: str, backend: str,
+    trace_field: str | None, lat_field: str | None, lon_field: str | None,
+    traces_per_shard: int, max_trace_points: int, region: str | None = None,
+) -> Manifest:
+    """Build a manifest for map-match: group points into traces, bin WHOLE traces into shards.
+
+    Unlike the per-row ops, the sharding unit is a trace — a trace is never split across shards. No
+    STAC search; output is always GeoJSON (geometry-valued). Each shard's flattened points are
+    written under ``output_uri/_input/`` and run-shard re-groups them by trace field.
+    """
+    from . import vector
+    from .manifest import Scene, shard_scenes
+
+    if not input_uri:
+        raise ValueError("map-match requires --input (a CSV or GeoJSON of trace points)")
+    if fmt == "cog":
+        fmt = "geojson"  # library default falls through as cog; map-match output is geojson
+    if fmt != "geojson":
+        raise ValueError(f"map-match output is geojson only (got {fmt!r})")
+    if backend == "offline":
+        backend = "valhalla"  # library default falls through as the reverse-geocode default
+    if backend not in vector._MATCH_BACKENDS:
+        raise ValueError(f"unknown map-match backend {backend!r}; "
+                         f"known: {', '.join(vector._MATCH_BACKENDS)}")
+    if traces_per_shard < 1:
+        raise ValueError("--traces-per-shard must be >= 1")
+
+    # Read the input in whatever format it arrives (csv or geojson points), group into traces.
+    in_fmt = "geojson" if input_uri.endswith(".geojson") or input_uri.endswith(".json") else "csv"
+    text = state.get_text(input_uri, region=region)
+    traces = vector.read_trace_points(
+        text, in_fmt, trace_field=trace_field, lat_field=lat_field, lon_field=lon_field
+    )
+
+    # Bin whole traces into shards of traces_per_shard, preserving order (deterministic).
+    trace_ids = list(traces)
+    scenes: list[Scene] = []
+    for i in range(0, len(trace_ids), traces_per_shard):
+        chunk_ids = trace_ids[i : i + traces_per_shard]
+        cid = f"chunk-{i // traces_per_shard:05d}"
+        # Flatten this shard's traces back to point rows (trace id + lat/lon) as CSV for run-shard.
+        rows = [{"trace_id": tid, "lat": lat, "lon": lon}
+                for tid in chunk_ids for lat, lon in traces[tid]]
+        chunk_uri = state.join(output_uri, "_input", f"{cid}.csv")
+        state.put_text(chunk_uri, vector.write_chunk(rows, "csv"), region=region)
+        scenes.append(Scene(id=cid, datetime="", assets={"points": chunk_uri}))
+
+    params = {"format": "geojson", "backend": backend, "trace_field": "trace_id",
+              "max_trace_points": max_trace_points}
+    shards = shard_scenes(scenes, 1)
+    return Manifest(
+        version=MANIFEST_VERSION, op="map-match", params=params, collection="vector", aoi=[],
         output_uri=output_uri, scenes=scenes, shards=shards,
     )
 

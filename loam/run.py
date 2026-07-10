@@ -149,6 +149,38 @@ def _zonal_shard(
     return uri, len(out_text.encode("utf-8"))
 
 
+def _match_traces_shard(
+    output_uri: str, index: int, scene: Scene, params: dict, *, region: str | None
+) -> tuple[str, int, list[dict]]:
+    """Map-match one chunk's traces to roads; write a GeoJSON of matched LineStrings.
+
+    Re-groups the chunk's points by trace and matches each independently: a bad/over-long/unmatched
+    trace is dropped and recorded (per-trace, so it doesn't sink the shard's good matches). Returns
+    (uri, bytes, failed).
+    """
+    from . import vector
+
+    backend = params.get("backend", "valhalla")
+    max_pts = int(params.get("max_trace_points", 100))
+    text = state.get_text(scene.assets["points"], region=region)
+    traces = vector.read_trace_points(text, "csv", trace_field=params.get("trace_field", "trace_id"))
+
+    matches: list[tuple[str, dict]] = []
+    failed: list[dict] = []
+    for tid, coords in traces.items():
+        try:
+            if len(coords) > max_pts:
+                raise ValueError(f"trace has {len(coords)} points > --max-trace-points {max_pts}")
+            matches.append((tid, vector.map_match(coords, backend=backend)))
+        except Exception as e:  # one bad trace must not sink the shard's other matches
+            failed.append({"trace": tid, "error": str(e)})
+
+    out_text = vector.write_matched(matches)
+    uri = state.output_uri_for(output_uri, index, f"{scene.id}__matched.geojson")
+    state.put_text(uri, out_text, region=region)
+    return uri, len(out_text.encode("utf-8")), failed
+
+
 def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force: bool = False) -> dict:
     """Run a single shard. Returns a small summary dict (also useful for tests)."""
     manifest = Manifest.from_json(state.get_text(manifest_uri, region=region))
@@ -187,6 +219,20 @@ def run_shard(manifest_uri: str, index: int, *, region: str | None = None, force
                 continue
             written.append(uri)
             bytes_written += nbytes
+    elif manifest.op == "map-match":
+        # Trace op: match each chunk's traces to roads → one GeoJSON/chunk. Per-trace failures
+        # (over-long, unmatched, backend error) are recorded, not fatal.
+        for scene in scenes:
+            try:
+                uri, nbytes, tfailed = _match_traces_shard(
+                    manifest.output_uri, index, scene, manifest.params, region=region
+                )
+            except Exception as e:  # a bad chunk must not sink the shard; record and continue
+                failed.append({"scene": scene.id, "error": str(e)})
+                continue
+            written.append(uri)
+            bytes_written += nbytes
+            failed.extend(tfailed)
     elif manifest.op == "temporal-composite":
         # Shard-level op: reduce the whole tile's time series into ONE output. A bad date is
         # dropped (recorded in failed); the shard fails only if no date survives.
