@@ -5,6 +5,11 @@ versions follow semver.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-09
+
+Runner integrations + migration docs: loam now emits capacity-watch fleets and runs under
+Nextflow, and ships a hands-on SageMaker Geospatial → loam transition guide.
+
 ### Added
 - **Runner integration: `loam dispatch --runner lagotto`** (closes #8): emits a capacity-watch
   fleet — a generated spawn-config whose command pulls shards from the pool + `lagotto watch`
