@@ -111,6 +111,9 @@ or an outer orchestrator, run them.
 loam plan --op band-math --indices 'NDWI=(green - nir) / (green + nir)' ...
 ```
 
+For the full picture — the manifest mental model, every op's flags, cross-op recipes (e.g.
+band-math → zonal-stats), and choosing a runner — see the **[guide](docs/GUIDE.md)**.
+
 ## As a library
 
 ```python
