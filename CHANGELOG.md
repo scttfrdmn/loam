@@ -5,6 +5,11 @@ versions follow semver.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-10
+
+Adds the map viewer — the SageMaker Studio map's replacement. First of the former "v1.0 — Product"
+items to ship as an incremental point release.
+
 ### Added
 - **Map viewer** (`loam view`, closes #10): reads a completed run's output COGs and writes one
   self-contained HTML map (folium `ImageOverlay`s on a Leaflet basemap) — a lightweight replacement
