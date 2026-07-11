@@ -6,6 +6,12 @@ versions follow semver.
 ## [Unreleased]
 
 ### Added
+- **Maintenance automation** (closes #55): `.github/dependabot.yml` (weekly `github-actions` + `pip`
+  + `docker` updates — each PR gated by the CI matrix) surfaces dep/action/base-image updates and
+  security advisories; a weekly `lock-refresh` workflow opens a `uv lock --upgrade` PR so the pinned
+  stack stays current; and the container base is now pinned by **digest** (was `:latest`) so a base
+  change is a deliberate, reviewed bump. loam still caps nothing — end users always resolve to
+  patched versions.
 - **Automated GHCR container publish** (closes #53): the release workflow now builds and pushes the
   arm64 image to `ghcr.io/scttfrdmn/loam:<version>` + `:latest` on each tag — on a free native
   arm64 runner (no QEMU), after the PyPI package is live, via `GITHUB_TOKEN` (no stored secret,
