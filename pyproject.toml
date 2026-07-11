@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 # Distribution name is "loam-geo" — the bare "loam" is taken on PyPI by an unrelated
 # config-manager project. The IMPORT name is unchanged: `pip install loam-geo` then `import loam`.
 name = "loam-geo"
-version = "0.6.0"
+version = "0.7.0"
 description = "Execution-agnostic geospatial operations (cloud-mask, band-math over Sentinel-2) for the spore.host substrate — an open replacement for SageMaker Geospatial's Earth Observation Jobs"
 readme = "README.md"
 requires-python = ">=3.10"
