@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/loam-logo.png" alt="loam" width="360">
+</p>
+
 # loam
 
 [![CI](https://github.com/scttfrdmn/loam/actions/workflows/ci.yml/badge.svg)](https://github.com/scttfrdmn/loam/actions/workflows/ci.yml)
