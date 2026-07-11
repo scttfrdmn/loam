@@ -5,6 +5,15 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Added
+- **Map viewer** (`loam view`, closes #10): reads a completed run's output COGs and writes one
+  self-contained HTML map (folium `ImageOverlay`s on a Leaflet basemap) — a lightweight replacement
+  for the SageMaker Studio map. No tile server; works identically for local and `s3://` outputs;
+  read-only (like `status`). New pure `loam/viz.py` — hand-rolled numpy colormap LUTs (per index)
+  and GDAL PNG encoding, so **no matplotlib/Pillow**; folium is an optional `[viz]` extra. `--max-layers`
+  caps a dense run; `--manifest` sets the initial extent; `--open` launches a browser (local). Static
+  overview-resolution; dynamic full-res tiling deferred.
+
 ## [0.5.1] — 2026-07-10
 
 ### Added

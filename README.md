@@ -49,6 +49,7 @@ that don't exist yet — because a runner only has to run one well-behaved comma
 ```bash
 pip install loam-geo            # distribution name (import name stays `loam`)
 pip install 'loam-geo[vector]'  # + offline reverse-geocode (the vector-enrichment op)
+pip install 'loam-geo[viz]'     # + `loam view` (static HTML map of a run's outputs)
 ```
 
 The PyPI distribution is **`loam-geo`** (the bare `loam` name was taken by an unrelated

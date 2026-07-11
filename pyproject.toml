@@ -37,6 +37,9 @@ dev = ["pytest>=7", "ruff>=0.5", "mypy>=1.8", "build>=1.0"]
 # Vector-enrichment ops (reverse-geocode). Offline GeoNames KD-tree — no network, deterministic,
 # spot-safe. Optional so the core raster install stays lean: pip install loam-geo[vector].
 vector = ["reverse_geocoder>=1.5"]
+# Map viewer (loam view). folium renders a self-contained static HTML from the run's COGs — no
+# server. Optional so the core install stays lean: pip install loam-geo[viz].
+viz = ["folium>=0.15"]
 
 [project.scripts]
 loam = "loam.cli:main"
