@@ -15,7 +15,10 @@
 #   spawn launch --instance-type m8g.4xlarge --image ghcr.io/scttfrdmn/loam:<tag> \
 #     --command 'loam run-shard --manifest s3://... -i 0'
 
-FROM quay.io/aarchsci/earth-observation:latest
+# Pinned by digest, not :latest, so a rebuild is reproducible and a base change (which could shift
+# GDAL/rasterio under loam) is a deliberate, reviewed bump — Dependabot's docker ecosystem proposes
+# it. The base is cosign-signed; verify with: cosign verify quay.io/aarchsci/earth-observation@<digest>
+FROM quay.io/aarchsci/earth-observation@sha256:379ba3405d84d7c63dc6ab3cd0b685fa87f9d1471dc25dbac21967ffab12af63
 
 # The base's conda-forge env is at /opt/conda (CONDA_PREFIX) but only activated via micromamba's
 # entrypoint, not PATH. The image runs as the non-root `mambauser` and /opt/conda isn't user-
@@ -26,7 +29,7 @@ ENV PATH=/opt/conda/bin:/home/mambauser/.local/bin:$PATH
 
 # Add loam's two pure-Python deps not in the EO base — both are wheels, so no arm64 native-build
 # risk. Pin loam-geo so the image tag maps to a known release; override with --build-arg for a bump.
-ARG LOAM_VERSION=0.7.0
+ARG LOAM_VERSION=0.8.0
 RUN pip install --no-cache-dir --user "loam-geo[vector,viz]==${LOAM_VERSION}" boto3
 
 # Sanity: fail the build if loam can't import/run in the assembled env.

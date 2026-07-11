@@ -1,0 +1,39 @@
+name: Lock refresh
+
+# loam floats `>=` dep floors and pins the resolved set in uv.lock. This weekly job re-resolves
+# (`uv lock --upgrade`) and opens a PR if anything moved — CI's matrix (py3.10–3.12) then proves the
+# upgraded stack still works before you merge. The loam-native complement to Dependabot's per-package
+# PRs. Manually runnable via the Actions tab.
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@f98e06938123ccabd21905ea5d0069192241f9f1 # v8.3.1
+
+      - name: Re-resolve the lockfile
+        run: uv lock --upgrade
+
+      - name: Open a PR if the lock changed
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
+        with:
+          branch: deps/lock-refresh
+          commit-message: "deps: refresh uv.lock (uv lock --upgrade)"
+          title: "deps: weekly uv.lock refresh"
+          body: |
+            Automated `uv lock --upgrade` — re-resolves the dependency set within the pyproject
+            floors. CI (ruff/mypy/pytest across py3.10–3.12) gates this: green = the upgraded stack
+            still works. Review the geo-stack bumps (rasterio/GDAL) before merging.
+          labels: dependencies
+          delete-branch: true

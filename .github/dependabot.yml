@@ -1,0 +1,35 @@
+# Keep loam current + patched as its underlying projects update — every bump is a PR gated by the
+# full CI matrix (py3.10–3.12, ruff/mypy/pytest), so an update is proven green before it merges.
+# loam never CAPS deps (that would strand users on unpatched versions); this only raises floors /
+# surfaces advisories / bumps pins.
+version: 2
+updates:
+  # GitHub Actions — bumps the SHA-pinned `uses:` refs (and their `# vX` comments) when a new
+  # release lands. Also the CI supply-chain security channel.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Python deps — the pyproject floors (numpy/rasterio/pystac-client/boto3 + the vector/viz extras)
+  # and Dependabot security advisories for them.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps"
+
+  # Container base — watches the Dockerfile `FROM` (the aarch.science EO image, pinned by digest)
+  # and proposes a digest bump when the base is rebuilt.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "docker"
