@@ -1223,3 +1223,84 @@ def test_dispatch_lagotto_emits_pool_fleet(tmp_path, capsys):
     assert "--shards 0-2" in out                         # across the manifest's shard range
     assert "r7i.2xlarge" in out                          # honors --instance
     assert "poll --daemon" in out
+
+
+# ── SageMaker EOJ compat shim (#9) ───────────────────────────────────────────
+
+def _eoj_config(op="band-math"):
+    job = ({"CloudMaskingConfig": {}} if op == "cloud-mask"
+           else {"BandMathConfig": {"CustomIndices": {"Operations": [
+               {"Name": "NDVI", "Equation": "(nir - red) / (nir + red)"}]}}})
+    return {
+        "InputConfig": {"RasterDataCollectionQuery": {
+            "RasterDataCollectionArn": "arn:...:raster-data-collection/sentinel-2-l2a",
+            "AreaOfInterest": {"AreaOfInterestGeometry": {"PolygonGeometry": {
+                "Coordinates": [[[-7, 19], [-3, 19], [-3, 22], [-7, 22], [-7, 19]]]}}},
+            "TimeRangeFilter": {"StartTime": "2023-01-01", "EndTime": "2023-12-31"},
+            "PropertyFilters": {"Properties": [{"Property": {"EoCloudCover": {"UpperBound": 20}}}]},
+        }},
+        "JobConfig": job,
+    }
+
+
+def test_compat_shim_band_math(tmp_path, monkeypatch):
+    from loam import catalog
+    from loam.compat import sagemaker as sm
+    from loam.manifest import Manifest
+    from loam import state
+
+    monkeypatch.setattr(catalog, "search", lambda **kw: [
+        Scene(id=f"s{i}", datetime="2023-01-01", assets={"nir": "n", "red": "r"}) for i in range(3)])
+
+    cfg = _eoj_config("band-math")
+    mu = str(tmp_path / "m.json")
+    job = sm.start_earth_observation_job(
+        Name="t", InputConfig=cfg["InputConfig"], JobConfig=cfg["JobConfig"],
+        OutputConfig={"S3Data": {"S3Uri": str(tmp_path / "out")}}, manifest_uri=mu)
+
+    assert job.Arn == mu
+    m = Manifest.from_json(state.get_text(mu))
+    assert m.op == "band-math"
+    assert m.params["indices"] == ["NDVI=(nir - red) / (nir + red)"]   # equation carried through
+    assert m.aoi == [-7, 19, -3, 22]                                    # bbox from the polygon
+    st = job.get_status()
+    assert st["Status"] == "IN_PROGRESS" and st["ShardsTotal"] >= 1     # SM-shaped + real counts
+
+
+def test_compat_shim_cloud_mask_and_multipolygon(tmp_path, monkeypatch):
+    from loam import catalog
+    from loam.compat import sagemaker as sm
+    from loam.manifest import Manifest
+    from loam import state
+
+    monkeypatch.setattr(catalog, "search", lambda **kw: [
+        Scene(id="s0", datetime="2023-01-01", assets={"scl": "s"})])
+    cfg = _eoj_config("cloud-mask")
+    # MultiPolygon variant of the AOI
+    cfg["InputConfig"]["RasterDataCollectionQuery"]["AreaOfInterest"]["AreaOfInterestGeometry"] = {
+        "MultiPolygonGeometry": {"Coordinates": [[[[-7, 19], [-3, 19], [-3, 22], [-7, 19]]]]}}
+    mu = str(tmp_path / "m.json")
+    sm.start_earth_observation_job(
+        Name="t", InputConfig=cfg["InputConfig"], JobConfig=cfg["JobConfig"],
+        OutputConfig={"S3Data": {"S3Uri": str(tmp_path / "out")}}, manifest_uri=mu)
+    m = Manifest.from_json(state.get_text(mu))
+    assert m.op == "cloud-mask" and m.aoi == [-7, 19, -3, 22]
+
+
+def test_compat_shim_default_manifest_uri_and_errors(tmp_path, monkeypatch):
+    from loam import catalog
+    from loam.compat import sagemaker as sm
+    monkeypatch.setattr(catalog, "search", lambda **kw: [])
+
+    # default manifest_uri = <S3Uri>/manifest.json
+    cfg = _eoj_config("band-math")
+    job = sm.start_earth_observation_job(
+        Name="t", InputConfig=cfg["InputConfig"], JobConfig=cfg["JobConfig"],
+        OutputConfig={"S3Data": {"S3Uri": str(tmp_path / "out")}})
+    assert job.Arn.endswith("/manifest.json")
+
+    # an unsupported JobConfig raises
+    with pytest.raises(ValueError, match="CloudMaskingConfig or BandMathConfig"):
+        sm.start_earth_observation_job(
+            Name="t", InputConfig=cfg["InputConfig"], JobConfig={"ResamplingConfig": {}},
+            OutputConfig={"S3Data": {"S3Uri": str(tmp_path / "o2")}})
