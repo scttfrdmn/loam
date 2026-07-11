@@ -5,6 +5,15 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Added
+- **arm64/Graviton container** (closes #11): a `Dockerfile` that builds a loam image `FROM`
+  [aarch.science](https://aarch.science)'s verified, signed conda-forge `earth-observation` base
+  (`quay.io/aarchsci/earth-observation`) + `pip install loam-geo[vector,viz] boto3`. The geospatial
+  stack is pre-assembled for native arm64, dodging the pip-on-Graviton wheel failures — verified by
+  building natively and running `loam run-shard` inside the image (GDAL 3.12, zero wheel builds).
+  Publishes to GHCR; `examples/graviton_spawn.sh` shows fanning shards to Graviton spot boxes.
+  (Automated multi-arch CI push is a follow-up; first push is manual.)
+
 ## [0.7.0] — 2026-07-10
 
 Adds the optional SageMaker-EOJ-shaped migration shim — a near-drop-in on-ramp for porting existing

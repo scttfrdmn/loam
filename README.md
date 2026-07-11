@@ -143,8 +143,16 @@ operations half of SageMaker Geospatial's EOJ **and** VEJ.
 EOJ-config → loam-CLI mapping with before/after code. And **[docs/PARITY.md](docs/PARITY.md)** for
 the full parity matrix and what loam deliberately does differently: **every SageMaker Geospatial
 operation is now covered** — cloud-mask, band-math, temporal composites, resample, zonal-stats,
-reverse-geocode, and map-match. Remaining roadmap is product surface, not ops: an arm64/Graviton
-container and a `titiler`/`leafmap` viewer.
+reverse-geocode, and map-match — plus a `loam view` map, an EOJ-shaped migration shim, and an
+arm64/Graviton container image (see the `Dockerfile`) for cheap Graviton prep.
+
+## Run on arm64/Graviton
+
+The geospatial stack is ~1.9× cheaper per core on Graviton but painful to `pip install` on arm64.
+The included **`Dockerfile`** builds a loam image `FROM` [aarch.science](https://aarch.science)'s
+verified conda-forge earth-observation base, so the stack is pre-assembled — build it on an arm64
+host (Graviton or Apple Silicon) and run shards on cheap spot boxes. See
+[`examples/graviton_spawn.sh`](examples/graviton_spawn.sh).
 
 ## Contributing
 
