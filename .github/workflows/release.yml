@@ -3,16 +3,27 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Manual: publish the container image for an already-released version without cutting a new tag
+  # (e.g. to backfill the first image). Only the container job runs; PyPI publish is skipped.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build the container for (e.g. 0.8.0)"
+        required: true
 
-# PyPI Trusted Publishing (OIDC) needs id-token: write. contents: write lets us cut the Release.
+# PyPI Trusted Publishing (OIDC) needs id-token: write. contents: write cuts the Release;
+# packages: write pushes the container image to GHCR.
 permissions:
   contents: write
   id-token: write
+  packages: write
 
 jobs:
   release:
     name: Build and publish
     runs-on: ubuntu-latest
+    # Only on a tag push — a manual workflow_dispatch just (re)publishes the container.
+    if: github.event_name == 'push'
     # Bind to the PyPI environment the Trusted Publisher is configured against (see below).
     environment:
       name: pypi
@@ -61,3 +72,56 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+  container:
+    name: Publish arm64 container to GHCR
+    # Native arm64 runner (free on public repos) — builds the aarch.science-based image with NO
+    # emulation, matching how #11 was verified. On a tag push, wait for the release job (the image
+    # pip-installs the just-published loam-geo); on manual dispatch it runs standalone.
+    needs: release
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success')
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Resolve version
+        id: ver
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            v="${{ github.event.inputs.version }}"
+          else
+            v="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      # The image installs loam-geo==<version> from PyPI, so wait until that version is resolvable
+      # (PyPI's index lags the release publish by up to ~a minute).
+      - name: Wait for loam-geo on PyPI
+        run: |
+          set -euo pipefail
+          v="${{ steps.ver.outputs.version }}"
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/loam-geo/$v/json")
+            [ "$code" = "200" ] && { echo "loam-geo $v is live"; exit 0; }
+            echo "waiting for loam-geo $v on PyPI ($i)…"; sleep 10
+          done
+          echo "::error::loam-geo $v not on PyPI after ~5min"; exit 1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (arm64)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          build-args: LOAM_VERSION=${{ steps.ver.outputs.version }}
+          tags: |
+            ghcr.io/scttfrdmn/loam:${{ steps.ver.outputs.version }}
+            ghcr.io/scttfrdmn/loam:latest

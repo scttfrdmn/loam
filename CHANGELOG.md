@@ -5,6 +5,13 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Added
+- **Automated GHCR container publish** (closes #53): the release workflow now builds and pushes the
+  arm64 image to `ghcr.io/scttfrdmn/loam:<version>` + `:latest` on each tag — on a free native
+  arm64 runner (no QEMU), after the PyPI package is live, via `GITHUB_TOKEN` (no stored secret,
+  no manual `docker login`). A `workflow_dispatch` (version input) publishes the image for an
+  already-tagged release on demand. Obsoletes the manual first-push noted in #11.
+
 ## [0.8.0] — 2026-07-10
 
 Adds the arm64/Graviton container — the last item on the roadmap. loam is now a complete

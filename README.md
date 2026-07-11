@@ -153,10 +153,16 @@ arm64/Graviton container image (see the `Dockerfile`) for cheap Graviton prep.
 ## Run on arm64/Graviton
 
 The geospatial stack is ~1.9× cheaper per core on Graviton but painful to `pip install` on arm64.
-The included **`Dockerfile`** builds a loam image `FROM` [aarch.science](https://aarch.science)'s
-verified conda-forge earth-observation base, so the stack is pre-assembled — build it on an arm64
-host (Graviton or Apple Silicon) and run shards on cheap spot boxes. See
-[`examples/graviton_spawn.sh`](examples/graviton_spawn.sh).
+A published arm64 image builds `FROM` [aarch.science](https://aarch.science)'s verified conda-forge
+earth-observation base, so the stack is pre-assembled:
+
+```bash
+docker pull ghcr.io/scttfrdmn/loam:latest    # or a pinned :0.8.0 tag
+```
+
+Each release publishes it automatically. Run shards on cheap Graviton spot boxes — see
+[`examples/graviton_spawn.sh`](examples/graviton_spawn.sh); the image is built by the included
+**`Dockerfile`** (rebuild it yourself on any arm64 host — Graviton or Apple Silicon).
 
 ## Contributing
 
