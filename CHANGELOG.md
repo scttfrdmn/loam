@@ -5,6 +5,11 @@ versions follow semver.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-10
+
+Adds the optional SageMaker-EOJ-shaped migration shim — a near-drop-in on-ramp for porting existing
+EOJ code onto loam.
+
 ### Added
 - **SageMaker EOJ compat shim** (closes #9): `loam.compat.sagemaker.start_earth_observation_job(...)`
   accepts a boto3 SageMaker-Geospatial-shaped EOJ config (RasterDataCollectionQuery + AOI + time +
