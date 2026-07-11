@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from . import __version__
@@ -200,6 +201,49 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_view(args: argparse.Namespace) -> int:
+    """Render a completed run's COG outputs onto a self-contained HTML map (read-only).
+
+    Discovers the run's GeoTIFFs, colorizes each per its index name, and writes one static
+    ``view.html`` with toggleable overlays on a basemap. Consumes outputs like ``status`` — no
+    server, no substrate, works for local and s3:// prefixes.
+    """
+    from . import raster, state, viz
+
+    tifs = sorted(u for u in state.list_keys(args.output, region=args.region) if u.endswith(".tif"))
+    if not tifs:
+        print(f"no .tif outputs found under {args.output}", file=sys.stderr)
+        return 1
+    if len(tifs) > args.max_layers:
+        print(f"warning: {len(tifs)} outputs > --max-layers {args.max_layers}; "
+              f"showing the first {args.max_layers} (raise --max-layers to see more).",
+              file=sys.stderr)
+        tifs = tifs[: args.max_layers]
+
+    layers = []
+    for uri in tifs:
+        name = uri.rsplit("__", 1)[-1].rsplit(".", 1)[0] if "__" in uri else uri.rsplit("/", 1)[-1]
+        r = raster.read_band(uri)  # a Raster (data + transform + crs + nodata)
+        rgba = viz.colorize(r.data, cmap=viz.cmap_for(name), nodata=r.nodata)
+        layers.append({"name": name, "png": viz.png_bytes(rgba), "bounds": viz.overlay_bounds(r)})
+
+    fit = None
+    if args.manifest:
+        from .manifest import Manifest
+        m = Manifest.from_json(state.get_text(args.manifest, region=args.region))
+        fit = m.aoi or None
+    # get_root().render() → a full standalone <!DOCTYPE html> page (not the notebook-embed
+    # fragment _repr_html_ returns), since this file is opened directly in a browser.
+    html = viz.build_map(layers, fit=fit).get_root().render()
+    state.put_text(args.out, html, region=args.region)
+    print(f"wrote {args.out} ({len(layers)} layer(s))")
+
+    if args.open and not state.is_s3(args.out):
+        import webbrowser
+        webbrowser.open(f"file://{os.path.abspath(args.out)}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="loam", description=__doc__.splitlines()[0])
     p.add_argument("--version", action="version", version=f"loam {__version__}")
@@ -290,6 +334,16 @@ def build_parser() -> argparse.ArgumentParser:
     pd.add_argument("--instance", default="m8g.4xlarge")
     pd.add_argument("--region", default=None)
     pd.set_defaults(func=_cmd_dispatch)
+
+    pv = sub.add_parser("view", help="render a run's COG outputs to a static HTML map")
+    pv.add_argument("--output", required=True, help="the run's --output prefix (local or s3://)")
+    pv.add_argument("--out", default="view.html", help="HTML file to write (default view.html)")
+    pv.add_argument("--max-layers", dest="max_layers", type=int, default=50,
+                    help="cap overlays rendered (default 50; dense runs have thousands of shards)")
+    pv.add_argument("--manifest", default=None, help="optional: use its AOI for the initial extent")
+    pv.add_argument("--open", action="store_true", help="open the HTML in a browser (local only)")
+    pv.add_argument("--region", default=None)
+    pv.set_defaults(func=_cmd_view)
 
     return p
 

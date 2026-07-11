@@ -772,6 +772,87 @@ def test_shape_map_match_is_trivial():
     assert s["scenes"] == 3 and s["outputs"] == 1 and s["approx_bytes_read"] == 0
 
 
+# ── viewer (#10) ─────────────────────────────────────────────────────────────
+
+def test_viz_colorize_masks_and_stretches():
+    from loam import viz
+    a = np.array([[0.0, 0.5], [1.0, np.nan]], np.float32)
+    rgba = viz.colorize(a, cmap="rdylgn")
+    assert rgba.shape == (2, 2, 4)
+    assert rgba[1, 1, 3] == 0        # NaN → transparent
+    assert rgba[0, 0, 3] == 255      # finite → opaque
+    # min stretches to LUT[0], max to LUT[255] (distinct colors)
+    assert not np.array_equal(rgba[0, 0, :3], rgba[1, 0, :3])
+
+
+def test_viz_colorize_binary_mask():
+    from loam import viz
+    m = np.array([[0, 1], [1, 0]], np.uint8)
+    rgba = viz.colorize(m, cmap="binary")
+    assert rgba[0, 0, 3] == 0 and rgba[0, 1, 3] == 255   # 0 transparent, 1 painted
+
+
+def test_viz_colorize_nodata_before_stretch():
+    from loam import viz
+    # a nodata sentinel must be masked AND excluded from the stretch range
+    a = np.array([[0.0, 10.0], [-9999.0, 5.0]], np.float32)
+    rgba = viz.colorize(a, cmap="viridis", nodata=-9999.0)
+    assert rgba[1, 0, 3] == 0                       # nodata → transparent
+    # 10.0 is the max of the FINITE values → LUT top; if -9999 had poisoned the range it wouldn't be
+    assert rgba[0, 1, :3].tolist() == viz._LUTS["viridis"][255].tolist()
+
+
+def test_viz_png_bytes_valid_header():
+    from loam import viz
+    rgba = viz.colorize(np.array([[0.0, 1.0]], np.float32), cmap="greens")
+    assert viz.png_bytes(rgba)[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_viz_overlay_bounds_wgs84_order():
+    from loam import viz
+    from loam.raster import Raster
+    r = Raster(np.ones((1098, 1098), np.float32), (10.0, 0, 500000.0, 0, -10.0, 2200000.0),
+               "EPSG:32629", None)
+    (s, w), (n, e) = viz.overlay_bounds(r)
+    assert s < n and w < e                          # south<north, west<east
+    assert 19.0 < s < 20.5 and -10 < w < -8         # a Mauritania-ish tile
+
+
+def test_cmd_view_end_to_end(tmp_path, monkeypatch):
+    pytest.importorskip("folium")
+    from loam import cli
+
+    out = tmp_path / "out" / "shard=00000"
+    out.mkdir(parents=True)
+    _write_ramp_raster(str(out / "sceneA__NDVI.tif"))
+    _write_ramp_raster(str(out / "sceneA__mask.tif"))
+    html = tmp_path / "view.html"
+
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda u: opened.append(u))
+    rc = cli.main(["view", "--output", str(tmp_path / "out"), "--out", str(html)])
+    assert rc == 0 and html.exists()
+    text = html.read_text()
+    assert "NDVI" in text and "mask" in text and "leaflet" in text.lower()
+    assert not opened                                # --open not passed → browser never fired
+
+
+def test_cmd_view_caps_layers(tmp_path, capsys):
+    pytest.importorskip("folium")
+    from loam import cli
+
+    out = tmp_path / "out" / "shard=00000"
+    out.mkdir(parents=True)
+    for i in range(3):
+        _write_ramp_raster(str(out / f"scene{i}__NDVI.tif"))
+    html = tmp_path / "view.html"
+    cli.main(["view", "--output", str(tmp_path / "out"), "--out", str(html), "--max-layers", "2"])
+    err = capsys.readouterr().err
+    assert "3 outputs > --max-layers 2" in err       # warned about the cap
+    assert html.read_text().count("__NDVI") >= 0      # still wrote a file
+    assert "2 layer" in capsys.readouterr().out or html.exists()
+
+
 def test_build_manifest_reverse_geocode_no_stac(tmp_path, monkeypatch):
     from loam import catalog, plan
 

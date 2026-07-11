@@ -22,7 +22,7 @@ It fused three things. loam relates to each differently:
 1. **Earth Observation Jobs (EOJ)** — the raster operations. *loam is at parity here.*
 2. **Vector Enrichment Jobs (VEJ)** — reverse-geocode + map-match. *loam covers both.*
 3. **The managed executor + Studio map viewer.** *loam deliberately does not reproduce the
-   executor* — that was the worst part — and the viewer is future work.
+   executor* — that was the worst part — but `loam view` now covers the map.
 
 ## 1. Earth Observation Jobs (raster ops)
 
@@ -50,7 +50,7 @@ It fused three things. loam relates to each differently:
 | SageMaker Geospatial piece | loam | Why |
 |---|---|---|
 | The managed job runner (opaque instance, provision → run → export → tear down) | **Deliberately not reproduced.** loam is execution-agnostic — it emits a manifest of idempotent shards and *prints* runner commands (`loam dispatch`); the [spore.host](https://github.com/spore-host) substrate (`truffle`/`lagotto`/`spawn`) runs them. | This was SM's *worst* part — see below. |
-| Studio map viewer | — | 🔜 planned ([#10](https://github.com/scttfrdmn/loam/issues/10), titiler/leafmap) |
+| Studio map viewer | `loam view` (static HTML map of a run's COGs via folium) | ✅ (overview-resolution) |
 | boto3 `sagemaker-geospatial` client shape | optional compat shim (migration on-ramp only, not the primary API) | 🔜 planned ([#9](https://github.com/scttfrdmn/loam/issues/9)) |
 
 ## Why we throw the executor away (and end up better)
@@ -84,10 +84,11 @@ On **operations**: **none** — every SageMaker Geospatial EOJ and VEJ operation
 (cloud-mask, band-math, temporal-composite, resample, zonal-stats; reverse-geocode, map-match).
 Arbitrary multi-band stacking is only partial.
 
-On the **product surface**: the Studio **map viewer**
-([#10](https://github.com/scttfrdmn/loam/issues/10)) has no equivalent yet, and a **boto3-compat
-shim** ([#9](https://github.com/scttfrdmn/loam/issues/9)) for near-drop-in migration is optional
-future work — loam's primary interface is a clean native API/CLI, not the SM EOJ shape (which had
-its own warts: un-chainable ops, `ConflictException` on export-while-in-progress, ARNs everywhere).
+On the **product surface**: `loam view` ([#10](https://github.com/scttfrdmn/loam/issues/10)) now
+covers the Studio map (a static overview-resolution HTML map; dynamic full-res tiling is deferred).
+A **boto3-compat shim** ([#9](https://github.com/scttfrdmn/loam/issues/9)) for near-drop-in
+migration is optional future work — loam's primary interface is a clean native API/CLI, not the SM
+EOJ shape (which had its own warts: un-chainable ops, `ConflictException` on
+export-while-in-progress, ARNs everywhere).
 
 See [DESIGN.md](DESIGN.md) for why loam is structured this way.

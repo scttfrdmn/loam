@@ -107,6 +107,13 @@ loam plan --op map-match --input traces.csv --trace-field trace_id --backend val
 ```
 → [`examples/map_match.sh`](../examples/map_match.sh)
 
+### 5. View a completed run on a map
+`loam view` (needs `pip install 'loam-geo[viz]'`) reads a run's output COGs and writes a
+self-contained HTML map — no server, works on local or `s3://` outputs:
+```bash
+loam view --output s3://b/ndvi/ --out ndvi.html --open   # --open launches a browser (local only)
+```
+
 ## Choosing a runner
 
 `loam dispatch --runner <r>` prints how to fan a manifest's shards over each. loam prints; you (or
