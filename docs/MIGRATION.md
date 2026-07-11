@@ -110,8 +110,28 @@ loam status --manifest s3://my-bucket/out/manifest.json --detail
 
 ## Want SM-shaped calls?
 
-A thin optional **boto3-compat shim** (SageMaker-EOJ-shaped functions that translate to a loam
-manifest) is planned as a migration on-ramp — see
-[#9](https://github.com/scttfrdmn/loam/issues/9). It's a convenience for porting existing code,
-not the primary interface: new work should use the native CLI/API above, which is cleaner and
-observable by design.
+A thin optional **boto3-compat shim** lets existing EOJ code run with minimal edits — swap the
+boto3 client for `loam.compat.sagemaker`:
+
+```python
+from loam.compat import sagemaker as geo
+
+job = geo.start_earth_observation_job(
+    Name="ndvi-2023",
+    InputConfig={"RasterDataCollectionQuery": {
+        "RasterDataCollectionArn": SENTINEL2_L2A_ARN,
+        "AreaOfInterest": {"AreaOfInterestGeometry": {"PolygonGeometry": {"Coordinates": [...]}}},
+        "TimeRangeFilter": {"StartTime": "2023-01-01", "EndTime": "2023-12-31"},
+        "PropertyFilters": {"Properties": [{"Property": {"EoCloudCover": {"UpperBound": 20}}}]}}},
+    JobConfig={"BandMathConfig": {"CustomIndices": {"Operations": [
+        {"Name": "NDVI", "Equation": "(nir - red)/(nir + red)"}]}}},
+    OutputConfig={"S3Data": {"S3Uri": "s3://my-bucket/out/"}},
+)
+job.get_status()   # {"Status": "IN_PROGRESS", "ShardsTotal": ..., "ShardsCompleted": ...}
+```
+
+It maps the EOJ config to a loam manifest and returns a job whose status reads loam's S3 ledger
+(so the opaque `IN_PROGRESS` now carries real shard counts). It **plans** the work — you still
+dispatch shards to a runner (it does not launch compute). It's a convenience for porting, **not**
+the primary interface: new work should use the native CLI/API above, which is cleaner and
+observable by design. Tracked in [#9](https://github.com/scttfrdmn/loam/issues/9).

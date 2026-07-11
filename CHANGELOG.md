@@ -5,6 +5,15 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Added
+- **SageMaker EOJ compat shim** (closes #9): `loam.compat.sagemaker.start_earth_observation_job(...)`
+  accepts a boto3 SageMaker-Geospatial-shaped EOJ config (RasterDataCollectionQuery + AOI + time +
+  cloud-cover filter, BandMath/CloudMasking JobConfig) and maps it to a loam `Manifest`, returning a
+  fake job whose `get_status()` reads loam's S3 ledger (so the opaque `IN_PROGRESS` carries real
+  shard counts). A **migration on-ramp for porting existing EOJ code, not the primary interface** —
+  it plans the work (writes the manifest); you still dispatch shards to a runner. No new dependency.
+  See docs/MIGRATION.md.
+
 ## [0.6.0] — 2026-07-10
 
 Adds the map viewer — the SageMaker Studio map's replacement. First of the former "v1.0 — Product"
