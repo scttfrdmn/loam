@@ -5,6 +5,13 @@ versions follow semver.
 
 ## [Unreleased]
 
+### Added
+- **`docs/GUIDE.md`** (closes #43): a task-oriented guide to composing loam's ops and runners —
+  the manifest mental model, an operations-reference table, cross-op recipes (e.g. band-math →
+  zonal-stats), and choosing a runner (local/spawn/lagotto/Nextflow). Documents loam's *seams*,
+  not the underlying tools. Linked from the README; a contract test pins the op table to the CLI
+  so it can't drift.
+
 ## [0.5.0] — 2026-07-10
 
 Completes SageMaker Geospatial operation parity: map-match is the last EOJ/VEJ op. loam now covers
