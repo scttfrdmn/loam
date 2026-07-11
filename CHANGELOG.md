@@ -5,6 +5,12 @@ versions follow semver.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-10
+
+Adds the arm64/Graviton container — the last item on the roadmap. loam is now a complete
+operation-for-operation SageMaker Geospatial replacement (EOJ + VEJ), plus a map viewer, an
+EOJ-shaped migration shim, and a Graviton-ready image.
+
 ### Added
 - **arm64/Graviton container** (closes #11): a `Dockerfile` that builds a loam image `FROM`
   [aarch.science](https://aarch.science)'s verified, signed conda-forge `earth-observation` base
