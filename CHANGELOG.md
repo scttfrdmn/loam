@@ -5,6 +5,8 @@ versions follow semver.
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-07-10
+
 ### Added
 - **`docs/GUIDE.md`** (closes #43): a task-oriented guide to composing loam's ops and runners —
   the manifest mental model, an operations-reference table, cross-op recipes (e.g. band-math →
