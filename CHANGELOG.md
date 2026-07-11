@@ -5,6 +5,12 @@ versions follow semver.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-10
+
+Completes SageMaker Geospatial operation parity: map-match is the last EOJ/VEJ op. loam now covers
+every operation the managed service offered — running in any region, in a fresh account, with no
+runtime cap, spot-priced and observable.
+
 ### Added
 - **Map-match op** (closes #30): `loam plan --op map-match --input traces.csv [--backend valhalla|osrm]`
   snaps ordered GPS traces (grouped by `--trace-field`) to the road network, emitting one matched
