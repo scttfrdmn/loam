@@ -18,7 +18,7 @@
 # Pinned by digest, not :latest, so a rebuild is reproducible and a base change (which could shift
 # GDAL/rasterio under loam) is a deliberate, reviewed bump — Dependabot's docker ecosystem proposes
 # it. The base is cosign-signed; verify with: cosign verify quay.io/aarchsci/earth-observation@<digest>
-FROM quay.io/aarchsci/earth-observation@sha256:379ba3405d84d7c63dc6ab3cd0b685fa87f9d1471dc25dbac21967ffab12af63
+FROM quay.io/aarchsci/earth-observation@sha256:e6c234c4f02ec25b1e6e36945ec6a84b5a260f44802b3fcd8693461300c234e6
 
 # The base's conda-forge env is at /opt/conda (CONDA_PREFIX) but only activated via micromamba's
 # entrypoint, not PATH. The image runs as the non-root `mambauser` and /opt/conda isn't user-
